@@ -315,3 +315,30 @@ Plus: `Users.ts` gets `useAPIKey: true` (for §3.3), the ticker's floor count fo
 | Positions shows no stocks | `cp-ref-si-portfolio.md` missing from the packet, or its §1 heading changed → check `grep -n '^## 1' …/cp-ref-si-portfolio.md` |
 | `[FAIL] portfolio: equity lines add to …` | A line or the register's total changed shape → read §1 of the portfolio file, report, stop |
 | `/finance` shows old numbers | Browser cache → reload; check `ls -Z public/data/ledger.json` label |
+
+---
+
+## §10 · Character sheets, sheet history and the F02 rule (v1.4, added Day 121 · Nov 18 2026)
+
+**What the site does now**
+- **F01 PCs / F02 NPCs open as the official RED character sheet** (`public/sheet.js` + `sheet.css`): tabs *1 · Stats & skills*, *2 · Lifepath & gear*, *3 · Cyberware*, *4 · More* (every sheet section the RED layout has no box for, in the sheet's order) and *Full text*. The sheet is read from the entry's full text (`pc-*.md` / `npc-*.md`). **Nothing is invented:** a box the sheet doesn't fill stays empty; book-block NPCs (Kade, Banerjee, Pulido…) and base-only sheets (Milo, Dov) show what they have.
+- **F02 lists only NPCs that have their own `npc-<name>.md`.** Everyone else stays searchable in *Reference sheets → NPC master list*.
+- **Sheet history:** the `sheet-history` collection keeps one version of a PC/NPC sheet each time it changes (the Entries `afterChange` hook; bookkeeping keys `updatedAt textSrc asOfDay seq createdAt` don't count). Each version is labelled with the play day it was filed for (`asOfDay`, from the bundle's last closed day); a second change on the same day is labelled "revised". **History starts at Day 120 (packet 121)** — nothing earlier was kept.
+- On the sheet: **Version** shows an older filing; **Mark changes since** outlines every changed cell (hover: "was …") and lists the changes at the top. Default: against the version before the one shown.
+
+**Every game day (replaces the sync line in §4)**
+```bash
+python3 tools/packet-to-bundle.py ~/datafort-days/<X>/packet ~/datafort-days/<X>/bundle
+python3 tools/datafort-sync.py ~/datafort-days/<X>/bundle --prune npc            # dry run: NPC deletes show as DELETE
+python3 tools/datafort-sync.py ~/datafort-days/<X>/bundle --prune npc --apply    # pg_dump first, then file
+```
+- `--prune npc` deletes NPC entries the bundle no longer lists (it refuses if the bundle has no NPCs at all). Expect **0 DELETE** on a normal day; a DELETE means an `npc-*.md` left the packet, so check with Shane before applying.
+- Check after applying: `curl -s -H "Authorization: users API-Key $(cat ~/.config/datafort/api-key)" "http://localhost:8087/api/sheet-history?limit=0" | python3 -c 'import json,sys;print(json.load(sys.stdin)["totalDocs"])'`. The count goes up by the number of sheets that changed that day.
+- In the filing-log row, add "sheets changed: N".
+
+**Modifying the sheet view**
+- Layout and styles: `public/sheet.js` (`page1`…`page4`) and `public/sheet.css`. Static files reload on refresh; bump `?v=` in `index.html` so browsers drop the cached copy.
+- New sheet section → a sheet box: add a `find(/^HEADING/)` block in `parse()` and a box in the page renderer; anything not taken lands on page 4 automatically.
+- A new value to track in history: add it to `flatten()` and tag the rendered cell with `K("<key>")`.
+- Collection or hook changes (`src/collections/SheetHistory.ts`) need a stack restart.
+- Installer: `tools/add_sheet_view.py PROJECT_DIR` (idempotent; re-labels for SELinux).

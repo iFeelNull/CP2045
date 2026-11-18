@@ -691,6 +691,7 @@ select {
   color: var(--fg); background: var(--field); border: 1px solid var(--line); }
 .fulltext mark { background: var(--accent-2); color: var(--on-accent); padding: 0 1px; }
 </style>
+<link rel="stylesheet" href="sheet.css?v=14">
 </head>
 <body>
 
@@ -773,6 +774,7 @@ select {
 <noscript><p style="position:fixed;inset:auto 16px 48px;z-index:99;padding:12px;background:#000;color:#fff">Datafort needs JavaScript to run.</p></noscript>
 
 <script src="config.js"></script>
+<script src="sheet.js?v=14"></script>
 <script>
 (function () {
   "use strict";
@@ -1348,7 +1350,7 @@ select {
         FT.floor = f.key; FT.q = q.toLowerCase(); FT.ids = new Set((j.docs || []).map(d => String(d.id)));
         renderRoster();
         const r = S.data[f.key].find(x => x.id === S.sel[f.key]);
-        if (r && r._tl && !S.editing) loadText(f, r);
+        if (r && r._tl && !S.editing) (isSheet(f, r) ? mountSheet(r) : loadText(f, r));
       } catch (e) { if (my === FT.seq) toast(errMsg(e), true); }
     }, 300);
   }
@@ -1460,6 +1462,7 @@ select {
         fileHTML(r, "File") + (has(r.source) ? blockHTML("Source", r.source) : "");
     },
     pc(f, r) {
+    if (r._tl && window.RedSheet) return headHTML(f, r, { sub: r.name }); /* RED sheet: pc */
       return headHTML(f, r, { sub: r.name }) +
         `<div class="meters">${meterHTML("Hit points", r.hp, r.hpMax, "hp")}${meterHTML("Humanity", r.hum, r.humMax, "hum")}</div>` +
         readouts([["Eddies", r.eddies], ["Reputation", r.rep], ["Improvement pts", r.ip]]) +
@@ -1468,6 +1471,7 @@ select {
         blockHTML("Notes", r.notes);
     },
     npc(f, r) {
+    if (r._tl && window.RedSheet) return headHTML(f, r, { sub: r.role, pills: [r.status] }); /* RED sheet: npc */
       const ti = THREATS.indexOf(r.threat), di = DISPOS.indexOf(r.disposition);
       const scales = `<div class="threat">
         <div class="scale"><div class="scale-k"><span>Threat</span><b>${has(r.threat) ? esc(r.threat) : "—"}</b></div>
@@ -1512,12 +1516,30 @@ select {
     const d = $("#detail");
     if (!r) { d.innerHTML = ""; return; }
     d.innerHTML = barHTML(f, r, false) + `<article class="d-body">${READ[f.key](f, r)}` +
-      (r._tl ? `<section class="d-text"><p class="eyebrow">Full text · loading…</p></section>` : "") + `</article>`;
+      (isSheet(f, r) ? `<section class="rs-host"></section>` : r._tl ? `<section class="d-text"><p class="eyebrow">Full text · loading…</p></section>` : "") + `</article>`;
     d.scrollTop = 0;
-    if (r._tl) loadText(f, r);
+    if (isSheet(f, r)) mountSheet(r); else if (r._tl) loadText(f, r);
   }
 
-  /* full text of one entry: fetched on demand, cached (last 12), search terms highlighted, first match scrolled into view */
+  /* RED-SHEET v1.4: PCs and NPCs with a sheet open as the official RED character sheet (public/sheet.js) */
+function isSheet(f, r) { return (f.key === "pc" || f.key === "npc") && !!r._tl && !!window.RedSheet; }
+async function sheetText(id) {
+  let t = TEXT.get(id);
+  if (t === undefined) {
+    t = (await API.http("GET", "/api/entries/" + encodeURIComponent(id) + "?depth=0&select[text]=true")).text || "";
+    TEXT.set(id, t); if (TEXT.size > 12) TEXT.delete(TEXT.keys().next().value);
+  }
+  return t;
+}
+function mountSheet(r) {
+  const el = $("#detail .rs-host"); if (!el) return;
+  window.RedSheet.mount(el, r, {
+    http: (m, u) => API.http(m, u), text: sheetText, markText, fmtSize,
+    terms: () => S.q.trim().toLowerCase().split(/\s+/).filter(w => w.length > 1)
+  }).catch(e => { el.innerHTML = `<p class="eyebrow">Sheet</p><p>${esc(errMsg(e))}</p>`; });
+}
+
+/* full text of one entry: fetched on demand, cached (last 12), search terms highlighted, first match scrolled into view */
   const TEXT = new Map();
   function markText(t, terms) {
     if (!terms.length) return [esc(t), 0];

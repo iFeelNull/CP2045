@@ -8,6 +8,7 @@ import sharp from 'sharp'
 import { Users } from './collections/Users'
 import { Media } from './collections/Media'
 import { Entries } from './collections/Entries'
+import { SheetHistory } from './collections/SheetHistory'
 import { DatafortFiles, DatafortImages } from './collections/DatafortUploads'
 
 const filename = fileURLToPath(import.meta.url)
@@ -28,7 +29,7 @@ export default buildConfig({
       baseDir: path.resolve(dirname),
     },
   },
-  collections: [Users, Media, Entries, DatafortImages, DatafortFiles],
+  collections: [Users, Media, Entries, DatafortImages, DatafortFiles, SheetHistory],
   csrf: origins,
   // Largest single upload (PDF/EPUB attachments). Keep public/config.js maxFileMB equal.
   upload: { limits: { fileSize: 100 * 1024 * 1024 } },

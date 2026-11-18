@@ -72,6 +72,7 @@ export interface Config {
     entries: Entry;
     'datafort-images': DatafortImage;
     'datafort-files': DatafortFile;
+    'sheet-history': SheetHistory;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -84,6 +85,7 @@ export interface Config {
     entries: EntriesSelect<false> | EntriesSelect<true>;
     'datafort-images': DatafortImagesSelect<false> | DatafortImagesSelect<true>;
     'datafort-files': DatafortFilesSelect<false> | DatafortFilesSelect<true>;
+    'sheet-history': SheetHistorySelect<false> | SheetHistorySelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -237,6 +239,39 @@ export interface DatafortFile {
   focalY?: number | null;
 }
 /**
+ * Versions of PC and NPC sheets, saved automatically when a sheet changes.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "sheet-history".
+ */
+export interface SheetHistory {
+  id: number;
+  /**
+   * Datafort entry id
+   */
+  entry: number;
+  floor?: string | null;
+  handle?: string | null;
+  /**
+   * Play day the sheet was filed for
+   */
+  day?: number | null;
+  label?: string | null;
+  data?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  text?: string | null;
+  owner: number | User;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv".
  */
@@ -279,6 +314,10 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'datafort-files';
         value: number | DatafortFile;
+      } | null)
+    | ({
+        relationTo: 'sheet-history';
+        value: number | SheetHistory;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -416,6 +455,22 @@ export interface DatafortFilesSelect<T extends boolean = true> {
   height?: T;
   focalX?: T;
   focalY?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "sheet-history_select".
+ */
+export interface SheetHistorySelect<T extends boolean = true> {
+  entry?: T;
+  floor?: T;
+  handle?: T;
+  day?: T;
+  label?: T;
+  data?: T;
+  text?: T;
+  owner?: T;
+  updatedAt?: T;
+  createdAt?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

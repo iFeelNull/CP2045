@@ -157,7 +157,7 @@ def main():
             hits = [k for k in sheets if k not in used and set(k.split("-")) <= words]
             if len(hits) == 1:
                 with_text(sheets[hits[0]], item); used.add(hits[0])
-            items.append(item)
+                items.append(item)  # F02 lists only NPCs with their own npc-<name>.md sheet (Day-121 rule)
     for key, p in sorted(sheets.items()):                            # a sheet with no master-list row
         if key not in used:
             items.append(with_text(p, {"floor": "npc", "data": {"handle": h1(p).title(), "system": "RED", "status": "Active",
@@ -255,6 +255,9 @@ def main():
                                             "system": "RED", "session": str(last_day)}})
 
     # ---------------------------------------------------------------- write
+    for it in items:  # the play day each PC/NPC sheet was filed for (labels its sheet-history version)
+        if it['floor'] in ('pc', 'npc'):
+            it['data']['asOfDay'] = last_day
     titles = {}
     for it in items:                                          # no two items may claim the same match key
         fl = it["floor"]; m = it.get("match", "handle" if fl in ("pc", "npc") else "title")

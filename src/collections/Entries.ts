@@ -3,6 +3,7 @@
 // (floor + free-form JSON `data`), so the page and JSON backups are unchanged.
 import type { CollectionConfig } from 'payload'
 import { ownerField, ownerOnly, signedIn, stampOwner } from './datafortAccess'
+import { snapshotSheet } from './SheetHistory'
 
 export const Entries: CollectionConfig = {
   slug: 'entries',
@@ -13,7 +14,7 @@ export const Entries: CollectionConfig = {
     useAsTitle: 'summary',
   },
   access: { read: ownerOnly, create: signedIn, update: ownerOnly, delete: ownerOnly },
-  hooks: { beforeChange: [stampOwner] },
+  hooks: { beforeChange: [stampOwner], afterChange: [snapshotSheet] },
   fields: [
     {
       name: 'floor',

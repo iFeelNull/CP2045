@@ -109,6 +109,8 @@ def main():
     ap.add_argument("--key-file", default=os.path.expanduser("~/.config/datafort/api-key"))
     ap.add_argument("--no-backup", action="store_true", help="skip the pg_dump before --apply")
     ap.add_argument("--verbose", action="store_true", help="list every item in the plan")
+    ap.add_argument("--prune", action="append", choices=["npc", "pc"], default=[],
+                    help="delete entries on this floor that the bundle does not list (F02: NPCs without an npc-<name>.md sheet)")
     a = ap.parse_args()
 
     root = pathlib.Path(a.bundle)
@@ -194,6 +196,14 @@ def main():
             plan.append(("CREATE", label, it, None, new, sorted(new)))
             if fl != "meta":
                 docs.append({"floor": fl, "data": {"seq": seq}})   # so two creates on one floor get distinct seq
+    # ---- prune: entries on --prune floors that no bundle item matched (backed up with the rest before --apply)
+    for fl in a.prune:
+        if not any(it['floor'] == fl for it in items):
+            die(f'--prune {fl}: the bundle has no {fl} items; refusing to empty the floor')
+    matched = {p[3]['id'] for p in plan if p[3]}
+    for d in list(docs):
+        if d.get('id') is not None and d['floor'] in a.prune and d['id'] not in matched:
+            plan.append(('DELETE', f"{d['floor']}:{d['data'].get(FLOORS[d['floor']] or 'title', '')}", {'floor': d['floor'], '_up': {}, '_text': False}, d, {}, []))
     counts = {}
     for action, label, it, cur, new, changed in plan:
         counts.setdefault(it["floor"], {}).setdefault(action, 0)
@@ -228,6 +238,10 @@ def main():
     done = 0
     for action, label, it, cur, new, changed in plan:
         if action == "SAME":
+            continue
+        if action == "DELETE":
+            api.call("DELETE", f"/api/entries/{cur['id']}")
+            done += 1
             continue
         replaced = []
         for field, rel in it["_up"].items():
