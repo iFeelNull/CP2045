@@ -101,6 +101,21 @@ h1 .page{color:var(--accent);text-shadow:0 0 24px rgba(255,59,48,.35)}
 .kpi .lbl{font:600 11px/1 var(--f-text);letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
 .kpi .val{margin-top:10px;font:800 clamp(28px,2.6vw,42px)/.9 var(--f-display);letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kpi .val.neg{color:var(--neg)} .kpi .val.pos{color:var(--fg)}
+.kpis.cashband{grid-template-columns:1.7fr repeat(4,minmax(0,1fr))}
+.kpis.cashband .kpi:first-child{border-color:var(--line-hi)}
+.kpi .val.cash{color:#ffb21a;font-size:clamp(34px,3.4vw,56px)}
+.grid.g-pf{grid-template-columns:1fr 1.25fr;grid-template-areas:"a b" "c d"}
+.tablewrap.pf{max-height:760px}
+#ptable tr.sec th{position:static;background:transparent;color:var(--accent-2);padding-top:18px;border-bottom:1px solid var(--line-hi)}
+#ptable tr.sec th span{color:var(--dim);letter-spacing:.06em;text-transform:none;font-weight:400;margin-left:8px}
+#ptable tr.subtotal td{font-weight:600;border-top:1px solid var(--line-hi)}
+#ptable th,#ptable td{padding:7px 9px} #ptable td:nth-child(2){min-width:30ch} #ptable td:nth-child(4){white-space:nowrap}
+#ptable tr.muted td{opacity:.62}
+#ptable .dim{color:var(--dim);font-weight:400}
+#ptable .sub{color:var(--faint);font-size:12px;margin-top:3px;max-width:70ch}
+#ptable .st{font:400 11px/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;padding:3px 6px;border:1px solid var(--line-hi)}
+#ptable .st-committed{color:var(--accent-2)} #ptable .st-verify{color:#ff8a70}
+@media (max-width:1100px){.kpis.cashband{grid-template-columns:repeat(2,minmax(0,1fr))}.kpis.cashband .kpi:first-child{grid-column:1 / -1}.grid.g-pf{grid-template-columns:1fr;grid-template-areas:none}}
 .kpi .sub{margin-top:8px;font:400 12px/1.25 var(--f-mono);color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kpi .sub b{color:var(--dim);font-weight:400}
 
@@ -288,8 +303,13 @@ a.btn{text-decoration:none}
       </div>
     </div>
     <div class="chips" id="chips"></div>
+    <section class="kpis cashband" id="cashband" aria-label="Liquid cash"></section>
     <section class="kpis" id="kpis" aria-label="Key figures"></section>
     <section class="grid" id="grid"></section>
+    <section class="panel ledger" id="portfolioPanel" aria-labelledby="pfTitle" hidden>
+      <div class="phead"><span class="idx">05</span><h2 id="pfTitle">Holdings</h2><span class="note">cash · securities · property — % of class and of all</span></div>
+      <div class="tablewrap pf"><table id="ptable"></table></div>
+    </section>
     <section class="panel ledger" id="ledgerPanel" aria-labelledby="ledgerTitle">
       <div class="phead"><span class="idx" id="ledgerIdx">05</span><h2 id="ledgerTitle">Ledger lines</h2><span class="note" id="ledgerNote"></span></div>
       <div class="tools no-export"><input class="search" id="search" type="search" placeholder="Search counterparty or memo" aria-label="Search ledger lines"><span class="count" id="count"></span></div>
@@ -658,13 +678,122 @@ function kpisFor(page, L){
       kpi('Net margin', pct(tin ? net / tin : NaN), 'net ÷ inflows', net < 0 ? 'neg' : ''),
       kpi('Cash after posting', after, `<b>${posRows().length}</b> accounts · posts Mon`)];
   }
-  const P = posRows(), cash = sum(P, p => p.cash), ar = sum(P, p => p.receivable), ap = sum(P, p => p.payableFirm), cont = sum(P, p => p.payableContingent);
-  return [kpi('Cash now', cash, `<b>${P.length}</b> accounts`), kpi('Receivable', ar, `<b>${D.receivables.filter(r => entityVisible(r.entity)).length}</b> lines`),
-    kpi('Payable, firm', -ap, `contingent ${short(cont)}`, 'neg'), kpi('Net position', sum(P, p => p.net), 'cash + AR − firm AP'),
-    kpi('After posting', sum(P, p => p.afterPosting), `pending ${short(sum(P, p => p.pending))}`)];
+  const ALL = allTotal(), cashT = D.cash ? D.cash.total : 0;
+  const secT = PF ? PF.equityTotal + sum(PF.debt, r => r.value) + sum(PF.personal, r => r.value) : 0;
+  const propT = sum(pfOwned(), p => p.cost), comT = sum(pfCommitted(), p => p.cost);
+  return [kpi('Equities at market', PF ? PF.equityTotal : 0, `${pct((PF ? PF.equityTotal : 0) / ALL)} of holdings · <b>${PF ? PF.equity.length : 0}</b> lines`),
+    kpi('Securities, all', secT, `${pct(secT / ALL)} · + notes & Orbital Air`),
+    kpi('Property at cost', propT, `${pct(propT / ALL)} · <b>${pfOwned().length}</b> priced`),
+    kpi('Total holdings', ALL, 'cash + securities + property'),
+    kpi('Committed', comT ? -comT : '—', comT ? `${pfCommitted().length} not yet deeded` : 'nothing pending', comT ? 'neg' : '')];
 }
 const median = a => { const s = a.slice().sort((x,y) => x-y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2; };
 const days = () => DAYS.filter(d => S.days.has(d));
+
+/* ---------- liquid cash + portfolio (bank-sheet model; add_bank_finance v1.4) ---------- */
+const PF = D.portfolio || null;
+function renderCash(){
+  const el = document.getElementById('cashband'); if (!el || !D.cash) return;
+  const c = D.cash, dlt = c.prevTotal == null ? null : c.total - c.prevTotal;
+  el.innerHTML = [
+    kpi('Liquid cash · SI total', c.total, `<b>${full(c.total)}</b>`, 'cash'),
+    kpi('SI Main', c.main, `${pct(c.main / c.total)} of the total`),
+    kpi('Opex accounts', c.opex, `<b>${Math.max(0, D.positions.length - 1)}</b> companies · swept nightly`),
+    kpi('Change on the day', dlt == null ? '—' : dlt, dlt == null ? 'first day on file' : `vs ${esc(dayLong(c.day - 1))} · debits ${short(c.debits)}`, dlt != null && dlt < 0 ? 'neg' : ''),
+    kpi("Tonight's sweep", c.sweep, esc(c.sweepMemo || '—'))
+  ].join('');
+}
+const pfOwned = () => (PF && PF.properties ? PF.properties.filter(p => p.status === 'Owned' && p.cost) : []);
+const pfCommitted = () => (PF && PF.properties ? PF.properties.filter(p => p.status === 'Committed' && p.cost) : []);
+function allocRows(){
+  return [
+    { name:'Liquid cash (SI)', value:D.cash ? D.cash.total : 0, color:'#ffb21a' },
+    { name:'Equities (CR-03)', value:PF ? PF.equityTotal : 0, color:'#408fba' },
+    { name:'Notes presenting', value:PF ? sum(PF.debt, r => r.value) : 0, color:'#6e67bd' },
+    { name:'Orbital Air (Hakk)', value:PF ? sum(PF.personal, r => r.value) : 0, color:'#12a7a7' },
+    { name:'Property at cost', value:sum(pfOwned(), p => p.cost), color:'#9d3d8d' }
+  ].filter(r => r.value > 0);
+}
+const allTotal = () => sum(allocRows(), r => r.value);
+function allocation(el){
+  const rows = allocRows(); if (!rows.length) return emptyState(el, 'No holdings', 'Nothing on file.');
+  const total = sum(rows, r => r.value);
+  chart(el, {
+    tooltip:{ trigger:'item', formatter:p => tipHead('Holdings') + tipRow(p.color, p.name, p.value) + `<div style="color:${C.dim};margin-top:4px;font-family:Share Tech Mono,monospace">${pct(p.value / total)} of the total</div>` },
+    graphic:[{ type:'group', left:'center', top:'middle', children:[
+      { type:'text', left:'center', top:-20, style:{ text:short(total), fill:C.fg, font:'800 34px "Big Shoulders Stencil Display", Impact, sans-serif', textAlign:'center' } },
+      { type:'text', left:'center', top:18, style:{ text:'TOTAL · ' + rows.length + ' CLASSES', fill:C.dim, font:'11px "Share Tech Mono", monospace', textAlign:'center' } } ] }],
+    series:[{ type:'pie', radius:['54%','76%'], center:['50%','52%'], padAngle:1.5, minAngle:4, avoidLabelOverlap:true,
+      itemStyle:{ borderRadius:4, borderColor:C.bg, borderWidth:2 },
+      label:{ show:el.clientWidth > 420, color:C.dim, fontSize:12, formatter:p => `${p.name}\n{v|${pct(p.value / total)}}`, rich:{ v:{ color:C.fg, fontFamily:'Share Tech Mono, monospace', fontSize:12, padding:[3,0,0,0] } } },
+      labelLine:{ show:el.clientWidth > 420, length:8, length2:10, lineStyle:{ color:C.lineHi } },
+      data:rows.map(r => ({ name:r.name, value:r.value, itemStyle:{ color:r.color } })) }]
+  });
+}
+function allocLegend(){ const rows = allocRows(), t = sum(rows, r => r.value); return `<div class="legend">${rows.map(r => `<span><i style="background:${r.color}"></i>${esc(r.name)} · ${pct(r.value / t)}</span>`).join('')}</div>`; }
+function hbar(el, g, tot, color, what, extra, log){
+  chart(el, {
+    grid:{ left:12, right:112, top:8, bottom:log ? 26 : 8, containLabel:true },
+    tooltip:{ trigger:'item', formatter:p => { const r = g[p.dataIndex]; return tipHead(r.name) + tipRow(color, what, r.value) + `<div style="color:${C.dim};margin-top:4px;font-family:Share Tech Mono,monospace">${extra(r)}</div>`; } },
+    xAxis:log ? { type:'log', logBase:10, min:v => Math.pow(10, Math.floor(Math.log10(Math.max(1, v.min)))), axisLabel:Object.assign({ formatter:v => short(v) }, axisLabel), splitLine:{ lineStyle:{ color:C.line, type:[2,4] } },
+      name:'log scale', nameLocation:'end', nameGap:-40, nameTextStyle:{ color:C.faint, fontFamily:'Share Tech Mono, monospace', fontSize:10, padding:[34,0,0,0] } } : valueAxis(),
+    yAxis:catAxis(g.map(r => r.name.length > 30 ? r.name.slice(0, 29) + '…' : r.name), { axisLabel:{ color:C.fg, fontSize:12, fontFamily:'Barlow Semi Condensed, sans-serif' } }),
+    series:[{ type:'bar', data:g.map(r => r.value), barMaxWidth:14, itemStyle:{ color, borderRadius:[0,4,4,0] },
+      label:{ show:true, position:'right', color:C.dim, fontFamily:'Share Tech Mono, monospace', fontSize:11, formatter:p => pct(p.value / tot) + ' · ' + short(p.value) } }]
+  });
+}
+function equityByIssuer(el){
+  if (!PF || !PF.equity.length) return emptyState(el, 'No equity', 'cp-ref-si-portfolio.md was not in the packet.');
+  const g = [...group(PF.equity, r => r.issuer).entries()].map(([k, v]) => ({ name:k, value:sum(v, r => r.value), pi:sum(v, r => r.pctIssuer || 0), n:v.length })).sort((a,b) => a.value - b.value);
+  hbar(el, g, PF.equityTotal, '#408fba', 'At market', r => `${pct(r.value / PF.equityTotal)} of equities · ${r.pi ? '≈' + r.pi.toFixed(1) + '% of the issuer' : 'preferred'}${r.n > 1 ? ' · ' + r.n + ' lines' : ''}`);
+}
+function propertyByOwner(el){
+  const P = pfOwned(); if (!P.length) return emptyState(el, 'No priced property', 'Add rows to the property register.');
+  const tot = sum(P, p => p.cost);
+  const g = [...group(P, p => p.owner).entries()].map(([k, v]) => ({ name:k, value:sum(v, p => p.cost), n:v.length })).sort((a,b) => a.value - b.value);
+  hbar(el, g, tot, '#9d3d8d', 'At cost', r => `${pct(r.value / tot)} of owned property · ${r.n} propert${r.n > 1 ? 'ies' : 'y'}`, true);
+}
+function renderPortfolio(){
+  const host = document.getElementById('ptable'); if (!host) return;
+  const ALL = allTotal(), num = v => v == null ? '—' : Number(v).toLocaleString('en-US');
+  const sec = (t, n) => `<tr class="sec"><th colspan="8">${t}${n ? ` <span>${n}</span>` : ''}</th></tr>`;
+  const row = (ref, hold, size, pi, mark, val, pc, pa, cls = '') => `<tr class="${cls}"><td><span class="code">${esc(ref)}</span></td><td>${hold}</td><td class="amt">${size}</td><td class="amt">${pi}</td><td class="amt">${mark}</td><td class="amt">${val}</td><td class="amt">${pc}</td><td class="amt">${pa}</td></tr>`;
+  let h = `<thead><tr><th scope="col">Ref</th><th scope="col">Holding</th><th class="amt" scope="col">Shares</th><th class="amt" scope="col">% of issuer · status</th><th class="amt" scope="col">Mark</th><th class="amt" scope="col">Value</th><th class="amt" scope="col">% of class</th><th class="amt" scope="col">% of all</th></tr></thead><tbody>`;
+  if (D.cash){
+    h += sec('Liquid cash', 'bank-now · ' + esc(dayLong(D.cash.day)));
+    h += row('SI', 'SI TOTAL — SI Main + every opex account', '—', '—', '—', full(D.cash.total), '100.0%', pct(D.cash.total / ALL));
+  }
+  if (PF && PF.equity.length){
+    const E = PF.equity.slice().sort((a,b) => b.value - a.value), T = PF.equityTotal;
+    h += sec('Equities — the CR-03 register, Hakk’s name', 'a price, not cash · ' + E.length + ' lines');
+    for (const r of E) h += row(r.code, `<b>${esc(r.issuer)}</b> <span class="dim">${esc(r.cls)}</span>${r.note ? `<div class="sub">${esc(r.note.slice(0, 140))}</div>` : ''}`, num(r.shares), r.pctIssuer == null ? 'pref.' : '≈' + r.pctIssuer.toFixed((String(r.pctIssuer).split('.')[1] || '').length > 1 ? 2 : 1) + '%', r.mark == null ? '—' : r.mark.toFixed(2), full(r.value), pct(r.value / T), pct(r.value / ALL));
+    h += row('', `<b>Equities at market</b>${PF.equityStated != null ? ` <span class="dim">· matches the register's ${full(PF.equityStated)}</span>` : ''}`, '', '', '', full(T), '100.0%', pct(T / ALL), 'subtotal');
+    if (PF.rocklin){ const r = PF.rocklin; h += row(r.code, `<b>${esc(r.issuer)}</b> <span class="dim">${esc(r.cls)} · indicative, not in any total</span><div class="sub">${esc(r.pctNote)}</div>`, num(r.shares), r.pctIssuer == null ? '—' : r.pctIssuer.toFixed(1) + '% of B', r.mark == null ? '—' : r.mark.toFixed(2), full(r.value), '—', '—', 'muted'); }
+  }
+  if (PF && PF.debt.length){
+    const T = sum(PF.debt, r => r.value);
+    h += sec('Notes presenting at face', 'cash when the agent pays');
+    for (const r of PF.debt) h += row(r.code, `<b>${esc(r.issuer)}</b><div class="sub">${esc(r.status)}</div>`, '—', 'presenting', '—', full(r.value), pct(r.value / T), pct(r.value / ALL));
+  }
+  if (PF && PF.personal.length){
+    h += sec('Hakk’s own name — outside the register');
+    for (const r of PF.personal) h += row(r.code, `<b>${esc(r.issuer)}</b> <span class="dim">${esc(r.cls)}</span><div class="sub">cost ${full(r.cost)} · ${esc(r.note)}</div>`, num(r.shares), '≈' + r.pctIssuer.toFixed(2) + '%', (r.value / r.shares).toFixed(2), full(r.value), '100.0%', pct(r.value / ALL));
+  }
+  if (PF && PF.properties && PF.properties.length){
+    const O = pfOwned(), T = sum(O, p => p.cost), order = { Owned:0, Verify:1, Committed:2 };
+    const L = PF.properties.slice().sort((a,b) => (order[a.status] ?? 3) - (order[b.status] ?? 3) || (b.cost || 0) - (a.cost || 0));
+    h += sec('Property — at cost basis', `${O.length} owned & priced · ${PF.properties.length} on the register (${esc(PF.propertySource || '')})`);
+    for (const p of L){
+      const inT = p.status === 'Owned' && p.cost;
+      h += row(p.owner.replace(/^(Slipstream Industries)$/, 'SI'), `<b>${esc(p.name)}</b>${p.district ? ` <span class="dim">· ${esc(p.district)}</span>` : ''}<div class="sub">${esc(p.source)}</div>`, '—', `<span class="st st-${esc(p.status.toLowerCase())}">${esc(p.status)}</span>`, '—',
+        p.cost ? full(p.cost) : 'unpriced', inT ? pct(p.cost / T) : '—', inT ? pct(p.cost / ALL) : '—', inT ? '' : 'muted');
+    }
+    h += row('', '<b>Owned property at cost</b>', '', '', '', full(T), '100.0%', pct(T / ALL), 'subtotal');
+    const Cm = pfCommitted(); if (Cm.length) h += row('', `<b>Committed, not deeded</b> <span class="dim">· not in any total</span>`, '', '', '', full(sum(Cm, p => p.cost)), '—', '—', 'muted');
+  }
+  h += `</tbody><tfoot><tr><td></td><td>Total holdings · cash + securities + owned property</td><td></td><td></td><td></td><td class="amt">${full(ALL)}</td><td></td><td class="amt">100.0%</td></tr></tfoot>`;
+  host.innerHTML = h;
+}
 
 /* ---------- page layouts ---------- */
 const LAYOUT = {
@@ -685,10 +814,11 @@ const LAYOUT = {
     { area:'a', title:'Bridge: inflows to net', note:'by category', draw:waterfall, legend:L => catLegend(presentCats(L)) },
     { area:'b', title:'Net by entity', note:'diverging at zero', draw:netByEntity, tall:true },
     { area:'c', title:'Net by day', note:'in, out & net', draw:netByDay } ] },
-  positions:{ cls:'g-pos', panels:[
-    { area:'a', title:'Cash by entity', note:'as of close', draw:el => cashByEntity(el), tall:true },
-    { area:'b', title:'Closing balance by book', note:'own scale per row', multiples:true },
-    { area:'c', title:'Receivables & payables', note:'by entity', draw:el => arAp(el) } ] }
+  positions:{ cls:'g-pf', panels:[
+    { area:'a', title:'Allocation', note:'% of total holdings', draw:el => allocation(el), legend:() => allocLegend(), tall:true },
+    { area:'b', title:'Equities by issuer', note:'% of equities · at market', draw:el => equityByIssuer(el), tall:true },
+    { area:'c', title:'Property by owner', note:'% of owned property · at cost', draw:el => propertyByOwner(el), tall:true },
+    { area:'d', title:'Cash by entity', note:'SI Main + opex · as of close', draw:el => cashByEntity(el), tall:true } ] }
 };
 
 /* ---------- render ---------- */
@@ -714,7 +844,7 @@ function renderPage(){
   });
   renderChips(L);
   renderTable(page, L);
-  document.getElementById('ledgerIdx').textContent = '0' + (lay.panels.length + 1);
+  document.getElementById('ledgerIdx').textContent = '0' + (lay.panels.length + (page === 'positions' ? 2 : 1));
 }
 
 function renderChips(L){
@@ -751,7 +881,8 @@ const COLS = [
 ];
 function renderTable(page, L){
   const tbl = document.getElementById('table');
-  if (page === 'positions') return renderPositionsTable(tbl);
+  const pfp = document.getElementById('portfolioPanel'); if (pfp){ pfp.hidden = page !== 'positions'; if (page === 'positions') renderPortfolio(); }
+  if (page === 'positions'){ document.getElementById('ledgerIdx').textContent = '06'; renderPositionsTable(tbl); document.getElementById('ledgerTitle').textContent = 'Accounts'; return; }
   let rows = page === 'inflows' ? inflows(L) : page === 'outflows' ? outflows(L) : L;
   const col = COLS.find(c => c.key === S.sort.key) || COLS[6];
   rows = rows.slice().sort((a, b) => { const x = col.get(a), y = col.get(b); return (x < y ? -1 : x > y ? 1 : 0) * S.sort.dir; });
@@ -894,6 +1025,7 @@ if (window.claude && typeof window.claude.use === 'function'){
 
 /* ---------- header ---------- */
 document.getElementById('asof').textContent = D.asOf.replace(/\s+/g, ' ');
+renderCash();
 document.getElementById('liveTag').textContent = 'Day ' + D.day;
 document.getElementById('railDay').innerHTML = 'D' + D.day + '<small>' + esc(dayLong(D.day).toUpperCase()) + '</small>';
 

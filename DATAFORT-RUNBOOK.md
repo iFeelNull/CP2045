@@ -2,7 +2,7 @@
 
 How to file each Cyberpunk RED 2045 play day (entries, canon and files) into the NXROOT Datafort on hades, and how to change the site safely. Written for Claude. Follow it as written; when something here conflicts with what you find on the machine, stop and tell the owner instead of improvising.
 
-Version 1.3 · 2026-11-18 · lives in the repo as `~/projects/payload/DATAFORT-RUNBOOK.md` and in the claude.ai Project.
+Version 1.4 · 2026-11-18 · lives in the repo as `~/projects/payload/DATAFORT-RUNBOOK.md` and in the claude.ai Project.
 
 ---
 
@@ -19,6 +19,7 @@ Version 1.3 · 2026-11-18 · lives in the repo as `~/projects/payload/DATAFORT-R
 | Entries | Postgres table `entries` (floor + JSON `data`) — **not in git** |
 | Images / PDFs | `~/projects/payload/media/datafort-images`, `media/datafort-files` — **not in git** |
 | Ledger | `~/projects/payload/public/data/ledger.json` (in git), built from each packet's `cp-ref-bank-balances.md`; the old Day-111 workbook ledger is archived as `public/data/ledger-xlsx-day111.json` |
+| Property register | `~/projects/payload/data/property-register.md` (in git): every property with owner, status and cost basis; feeds Positions. A packet's own `cp-ref-property-register.md` wins if one ever ships |
 | Filing log | `~/datafort-days/FILING-LOG.md` on hades and `claude/datafort-filing-log.md` in the Project: one row per packet filed |
 | Tools | `~/projects/payload/tools/`: `packet-to-bundle.py` (packet → bundle), `datafort-sync.py` (bundle → Datafort), `add_canon_floor.py` + `add_fulltext.py` + `add_bank_finance.py` (site patches), `bank-to-ledger.py` (bank sheet → finance dashboard); `parse_ledger.py` is retired (no more workbooks) |
 | Backups | `~/backups/` (mode 700): `payload-db-*.dump` (pg_dump -Fc), `payload-pre-*.tar.gz` |
@@ -150,6 +151,10 @@ clear; python3 ~/projects/payload/tools/bank-to-ledger.py ~/datafort-days/$X/pac
 ```
 
 It backs up the old file to `~/backups/ledger-pre-day*.json`, relabels the new one (must read `container_file_t:s0:c369,c692`) and swaps it in. `[OK] no change` on a re-run is normal. **Any `[FAIL]` line = the sheet doesn't reconcile:** report the day and the difference it prints to the owner and stop; never edit the sheet or the ledger by hand. The Datafort still gets the sheet itself (Reference sheets → Bank balances) through §4.3.
+
+**What the page shows.** A **liquid cash** band on every page (SI TOTAL, SI Main, opex, change on the day, tonight's sweep) that the slicers never touch. **Positions** is the portfolio: allocation (cash / equities / notes presenting / Hakk's Orbital Air / property at cost), equities by issuer, property by owner, cash by entity, and a holdings table with % of issuer, % of class and % of all. Stocks and notes come from the packet's `cp-ref-si-portfolio.md` (§1 equity, §2 lines STILL PRESENTING, §9 Orbital Air); the tool checks the equity lines add to the register's EQUITY AT MARKET row and refuses to write if not. Rocklin's Class B is shown as indicative, outside every total, as the register carries it. Prices are marks, not cash.
+
+**Keeping the property register current.** After a close that deeds, sells or prices a property (the day's bank debits and the place's row in `cp-ref-places-master-list.md` say so), edit the matching row in `data/property-register.md` — `Owned` with the recorded price; `Committed` for won or accepted but not deeded; `Verify` when the page is ambiguous (tell the owner); `—` when owned with no price on the page. Never invent a price. Then re-run the dry run above; the summary line prints the owned total.
 
 How lines are built: each SI Main debit is one outflow line (category by keyword; `capex` in the memo → Capital flow); each nightly sweep is an Intra-group inflow to SI Main; each day-over-day change in an opex balance is one line on that company (the sheet has no detail behind it). Positions are the latest day's balances. New companies in a later sheet get an account automatically; add them to `KNOWN` in the tool for a nicer code.
 
@@ -307,4 +312,6 @@ Plus: `Users.ts` gets `useAPIKey: true` (for §3.3), the ticker's floor count fo
 | Opening an entry shows "Full text · loading…" forever | Stack down or entry deleted → reload; check `podman logs --tail 20 ws-payload-web` |
 | `bank-to-ledger.py` `[FAIL] Day N: SI Main … ≠ …` | The close's bank sheet doesn't roll (a missing/duplicated debit or sweep) → report the day and the difference, stop |
 | `bank-to-ledger.py` "no SI TOTAL / SI Main row" | The sheet's layout changed → show the owner the block, adapt `parse()` (§6.1 rules) |
+| Positions shows no stocks | `cp-ref-si-portfolio.md` missing from the packet, or its §1 heading changed → check `grep -n '^## 1' …/cp-ref-si-portfolio.md` |
+| `[FAIL] portfolio: equity lines add to …` | A line or the register's total changed shape → read §1 of the portfolio file, report, stop |
 | `/finance` shows old numbers | Browser cache → reload; check `ls -Z public/data/ledger.json` label |

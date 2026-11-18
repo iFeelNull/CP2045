@@ -30,6 +30,8 @@ ap.add_argument('--ledger', default=str(pathlib.Path.home() / 'projects/payload/
                 help='dashboard JSON to update (default: the hobby site\'s public/data/ledger.json)')
 ap.add_argument('--packet', dest='packet_no', default='', help='packet number, recorded in the source note')
 ap.add_argument('--apply', action='store_true', help='write the file (default is a dry run)')
+ap.add_argument('--properties', default='', help='property register (default: the packet\'s cp-ref-property-register.md, '
+                'else ~/projects/payload/data/property-register.md)')
 A = ap.parse_args()
 
 src = pathlib.Path(A.packet).expanduser()
@@ -96,7 +98,7 @@ def parse(text):
             if head == 'company':                                         sec = 'opex';  continue
             if head.startswith('sweep'):                                  sec = 'sweep'; continue
             if head.startswith('~time'):                                  sec = 'debit'; continue
-            if set(cells[0]) <= set('-: '):                               continue      # |---| separator
+            if re.fullmatch(r':?-{3,}:?', cells[0]):                       continue      # |---| separator
             if sec == 'si':
                 (rec.__setitem__('total', num(cells[1])) if 'TOTAL' in cells[0].upper() else rec.__setitem__('main', num(cells[1])))
             elif sec == 'opex':
@@ -224,6 +226,99 @@ if abs(sum(p['cash'] for p in positions) - lr['total']) > 0.005:   # 3) position
 if any(str(d) not in closes['si'] for d in DAYS):                  # 4) a close for SI Main every day
     dash_fail += 1; fails.append('missing SI Main close')
 
+# ---------------------------------------------------------------- portfolio (Positions page)
+# Stocks and notes come from the packet's cp-ref-si-portfolio.md. Properties come from the property
+# register. Prices are marks, not cash; the page keeps them apart from the bank figures.
+PKT = src.parent
+MONEY = re.compile(r'\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+')
+def money(cell):
+    m = MONEY.search(cell.replace('*', ''))
+    return float(m.group().replace(',', '')) if m else None
+def table_after(text, heading_re):
+    """Rows (lists of cells) of the first markdown table after the heading that matches heading_re."""
+    m = re.search(heading_re, text, re.M)
+    if not m:
+        return []
+    rows, started = [], False
+    for line in text[m.end():].splitlines():
+        if line.startswith('|'):
+            started = True
+            cells = [c.strip() for c in line.strip().strip('|').split('|')]
+            if not re.fullmatch(r':?-{3,}:?', cells[0]):     # skip only the |---| separator
+                rows.append(cells)
+        elif started and line.strip():
+            break
+    return rows[1:]                                   # drop the header row
+
+portfolio, pfails = None, []
+pf = PKT / 'cp-ref-si-portfolio.md'
+if pf.is_file():
+    pt = pf.read_text(encoding='utf-8')
+    equity, rocklin, stated = [], None, None
+    for c in table_after(pt, r'^## 1 · ACTUAL — EQUITY'):
+        if len(c) < 7:
+            continue
+        name = re.sub(r'\*', '', c[2])
+        if not c[0].strip():                          # the EQUITY AT MARKET total row
+            stated = money(c[-1]); continue
+        short = re.split(r'\s+[—–]\s+|:', name)[0].strip()
+        cls = 'preferred' if 'preferred' in short.lower() else 'Class B (control)' if 'Class B' in name else 'common'
+        issuer = re.sub(r'\s+(common|preferred|—.*|Class B.*)$', '', short).strip()
+        pct = re.search(r'(\d+(?:\.\d+)?)%', c[4])
+        row = {'code': c[1], 'issuer': issuer, 'cls': cls, 'shares': money(c[3]) or 0,
+               'pctIssuer': float(pct.group(1)) if pct else None, 'pctNote': re.sub(r'\*', '', c[4]),
+               'mark': money(c[5]), 'value': money(c[6]) or 0, 'note': name if len(name) > len(short) + 3 else ''}
+        if 'INDICATIVE' in c[6].upper():
+            rocklin = row
+        else:
+            equity.append(row)
+    debt = []
+    for c in table_after(pt, r'^## 2 · ACTUAL — DEBT'):
+        if len(c) >= 5 and 'STILL PRESENTING' in c[4].upper():
+            debt.append({'code': c[1], 'issuer': re.sub(r'\*', '', c[2]), 'value': money(c[3]) or 0,
+                         'status': re.sub(r'\*', '', c[4])[:160]})
+    personal = []                                     # §9: Orbital Air common in Hakk's own name
+    m9 = re.search(r'Holding at the Day-\d+ close:\*\*\s*([\d,]+) Orbital Air common at cost \*\*([\d,.]+)\*\*;.*?close[^*]*\*\*([\d,.]+)\*\*', pt)
+    if m9:
+        sh = float(m9.group(1).replace(',', ''))
+        personal.append({'code': 'OF-1006-A', 'issuer': 'Orbital Air', 'cls': 'common', 'shares': sh,
+                         'pctIssuer': round(sh / 1_960_000_000 * 100, 2), 'cost': float(m9.group(2).replace(',', '')),
+                         'value': float(m9.group(3).replace(',', '')), 'note': "Hakk's own name; not CR-03"})
+    eq_total = round(sum(r['value'] for r in equity), 2)
+    if stated is not None and abs(eq_total - stated) > 0.5:
+        pfails.append(f'portfolio: equity lines add to {eq_total:,.2f}, the file states {stated:,.2f}')
+    portfolio = {'source': pf.name, 'equity': equity, 'rocklin': rocklin, 'debt': debt, 'personal': personal,
+                 'equityTotal': eq_total, 'equityStated': stated}
+else:
+    print(f'     (no {pf.name} in the packet: Positions shows cash only)')
+
+reg = pathlib.Path(A.properties).expanduser() if A.properties else (
+    PKT / 'cp-ref-property-register.md' if (PKT / 'cp-ref-property-register.md').is_file()
+    else pathlib.Path.home() / 'projects/payload/data/property-register.md')
+properties = []
+if reg.is_file():
+    rows = [l for l in reg.read_text(encoding='utf-8').splitlines() if l.startswith('| ') and not l.startswith('| Property') and not l.startswith('|---')]
+    for l in rows:
+        c = [x.strip() for x in l.strip().strip('|').split('|')]
+        if len(c) >= 6:
+            properties.append({'name': c[0], 'owner': c[1], 'district': c[2] if c[2] not in ('—', '') else '',
+                               'status': c[3], 'cost': money(c[4]), 'source': c[5]})
+    if portfolio is None:
+        portfolio = {'source': '', 'equity': [], 'rocklin': None, 'debt': [], 'personal': [], 'equityTotal': 0, 'equityStated': None}
+    portfolio['properties'] = properties
+    portfolio['propertySource'] = reg.name
+else:
+    print(f'     (no property register at {reg}: Positions shows no properties)')
+if portfolio is not None:
+    owned = [p for p in properties if p['status'] == 'Owned' and p['cost']]
+    portfolio['propertyOwnedTotal'] = round(sum(p['cost'] for p in owned), 2)
+    print(f"     portfolio: {len(portfolio['equity'])} equity lines {portfolio['equityTotal']:,.2f}"
+          f" (stated {portfolio['equityStated'] or 0:,.2f}) · {len(portfolio['debt'])} note(s) presenting"
+          f" · {len(properties)} properties, owned at cost {portfolio['propertyOwnedTotal']:,.2f} ({reg.name})")
+fails += pfails
+dash += 1 if portfolio else 0
+dash_fail += len(pfails)
+
 src_note = f"{src.name}" + (f" (packet {A.packet_no})" if A.packet_no else '')
 D = {
     'model': 'bank-balances',
@@ -239,7 +334,11 @@ D = {
     'receivables': [], 'payables': [],
     'totals': {str(d): bank[str(d)]['total'] for d in DAYS},
     'checks': {'dashboard': dash, 'dashboardFailing': dash_fail, 'reconciliation': recon, 'reconciliationFailing': len(fails) - dash_fail},
-    'source': src_note, 'bank': bank,
+    'source': src_note, 'bank': bank, 'portfolio': portfolio,
+    'cash': {'day': last, 'total': lr['total'], 'main': lr['main'], 'opex': round(sum(lr['opex'].values()), 2),
+             'prevTotal': bank[str(last - 1)]['total'] if str(last - 1) in bank else None,
+             'sweep': round(sum(s['amount'] for s in lr['sweeps']), 2), 'sweepMemo': lr['sweeps'][0]['memo'] if lr['sweeps'] else '',
+             'debits': round(sum(x['amount'] for x in lr['debits']), 2)},
 }
 
 # ---------------------------------------------------------------- report
