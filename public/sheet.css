@@ -96,3 +96,7 @@
   .rs-stats { grid-template-columns: repeat(5, 1fr); }
   .rs-p2, .rs-row2, .rs-lpgrid, .rs-row3 { grid-template-columns: 1fr; }
 }
+.rs-tab td.rs-found { font-weight: 700; color: var(--fg); }
+.rs-tab td.rs-opt { padding-left: 16px; color: var(--dim); }
+.rs-pend { margin-top: 4px; }
+.rs-pend thead th { background: var(--accent-2); border-color: var(--accent-2); }

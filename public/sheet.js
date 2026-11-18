@@ -139,7 +139,7 @@
     const find = (re, level) => secs.filter(s => s.h && re.test(s.h) && (!level || s.level <= level));
     const take = s => { if (s) used.add(s); return s; };
     const M = { name: "", kind: "", identity: [], stats: {}, statMax: {}, derived: {}, roles: [], skills: [], skillsNote: "", weapons: [], weaponsText: "",
-      armor: {}, armorText: "", rep: null, repText: "", ip: null, ipText: "", lifepath: {}, lifeExtra: [], friends: [], loves: [], enemies: [], cyber: {},
+      armor: {}, armorText: "", rep: null, repText: "", ip: null, ipText: "", lifepath: {}, lifeExtra: [], friends: [], loves: [], enemies: [], cyber: {}, cyberStatus: [], cyberPending: [], cyberSources: [],
       cyberText: "", gear: [], gearText: "", housing: "", lifestyle: "", rent: "", cash: "", more: [] };
     const t0 = secs.find(s => s.level === 1 && !s.page);
     if (t0) { M.name = t0.h.replace(/^NPC( CANON)?\s+[—-]\s+/i, ""); used.add(t0); }
@@ -228,25 +228,31 @@
       for (const t of tables(s)) { got = true; for (const r of t.rows) M.enemies.push([r[0] || "", r[1] || "", r[2] || "", r.slice(3).join(" · ")]); }
       if (!got && textOf(s)) M.enemies.push(["", textOf(s), "", ""]);
     }
-    // cyberware
-    for (const s of find(/CYBERWARE/)) {
-      take(s); let last = null, got = false;
-      for (const t of tables(s)) {
-        const c0 = col(t.head, /^(slot|piece|item|cyberware|installed)/); if (c0 < 0) continue; got = true;
-        const cin = col(t.head, /^installed/), cno = col(t.head, /^(notes?|where|data)/), chl = col(t.head, /^hl$/);
-        for (const r of t.rows) {
-          const name = plain(r[c0]); if (!has(name) || /^total$/i.test(name) || /^everything else$/i.test(name)) continue;
-          const opt = /^·|^·/.test(name.trim());
-          const nm = name.replace(/^[··]\s*/, "");
-          const data = [cin >= 0 && cin !== c0 ? r[cin] : "", chl >= 0 ? "HL " + plain(r[chl]) : "", cno >= 0 ? r[cno] : ""].filter(has).join(" · ");
-          const slot = opt && last ? last : slotOf(nm);
-          (M.cyber[slot] = M.cyber[slot] || []).push({ name: nm, data, opt });
-          if (!opt) last = slot;
-        }
+    // cyberware: tables, bullet lists, "**Chrome …:**" lists in other sections, the Humanity line, and
+    // "X required / offered" — every item classified against the RED cyberware catalog (CR p. 358–366)
+    parseCyber(M, secs, used, take);
+    // the "**Chrome (…):**" list some sheets keep inside another section (Dov)
+    for (const s of secs) {
+      if (/CYBER/i.test(s.h)) continue;
+      const i = s.lines.findIndex(l => /^\s*\*\*(Chrome|Cyberware)\b[^*]*\*\*:?\s*$/i.test(l));
+      if (i < 0) continue;
+      const blk = []; for (let j = i + 1; j < s.lines.length; j++) { const l = s.lines[j]; if (!l.trim() && blk.length) break; if (l.trim()) blk.push(l); }
+      const left = cyberLines(M, blk, "the " + plain(s.lines[i]).replace(/:$/, "") + " list under " + s.h);
+      if (left.length) M.cyberText += (M.cyberText ? "\n\n" : "") + left.join("\n");
+    }
+    // nothing installed on a cyberware page? the Humanity line may name the installs (Kade, Banerjee)
+    if (!cyberCount(M) && has(M.derived.humText)) {
+      const h = unstrike(M.derived.humText);
+      if (/no cyberware/i.test(h)) M.cyberStatus.push("Humanity line: " + plain(h));
+      else {
+        const hits = []; for (const piece of plain(h).split(/\s*[+;,(]\s*|\s+and\s+/)) { const c = catOf(piece); if (!c) continue; const nm = titleCase(plain(piece).match(c.re)[0]); if (!hits.some(x => x.name === nm)) hits.push({ c, name: nm }); }
+        if (hits.length) { const ctx = {}; hits.forEach((x, k) => placeCyber(M, x.c, x.name, piece2side(x.name), k ? "" : "From the Humanity line: " + plain(h), ctx)); }
       }
-      const rest = s.lines.filter(l => !/^\s*\|/.test(l)).join("\n").trim();
-      if (rest) M.cyberText += (M.cyberText ? "\n\n" : "") + rest;
-      if (!got && !rest) used.delete(s);
+    }
+    // "**Internal Agent required**", "**Kiroshis offered**" anywhere on the sheet: not installed
+    for (const m of String(text).matchAll(/\*\*([^*\n]{2,60}?)\s+(required|offered)\*\*([^\n]*)/gi)) {
+      if (catOf(m[1]) && !M.cyberPending.some(p => norm(p.name) === norm(plain(m[1]))))
+        M.cyberPending.push({ name: plain(m[1]), status: titleCase(m[2]) + " — not installed", note: plain(m[3]).replace(/^[\s—–:-]+/, "").slice(0, 400) });
     }
     // gear
     for (const s of find(/^GEAR/)) {
@@ -341,16 +347,116 @@
     const extra = head.map((h, i) => [plain(h), r[i]]).filter(([h]) => !/^(weapon|dmg|damage|ammo|rof|notes?)$/i.test(h) && h).filter(([, v]) => has(plain(v))).map(([h, v]) => h + ": " + plain(v));
     return { name: g(/^weapon/), dmg: plain(g(/^(dmg|damage)/)), ammo: plain(g(/^ammo/)), rof: plain(g(/^rof/)), notes: [extra.join(" · "), g(/^notes?/)].filter(has).join(" · ") };
   }
-  function slotOf(n) {
-    const l = n.toLowerCase();
-    if (/neural link|interface plug|chipware|kerenzikov|sandevistan|neural/.test(l)) return "Neural Link";
-    if (/cyberaudio|internal agent|audio recorder|bug detector|amplified hearing|radio|scrambler|voice stress/.test(l)) return "Cyberaudio Suite";
-    if (/cybereye|kiroshi|\beye\b/.test(l)) return /left/.test(l) ? "Left Cybereye" : "Right Cybereye";
-    if (/cyberarm|\barm\b/.test(l)) return /left/.test(l) ? "Left Cyberarm" : "Right Cyberarm";
-    if (/cyberleg|\bleg\b/.test(l)) return /left/.test(l) ? "Left Cyberleg" : "Right Cyberleg";
-    if (/borg/.test(l)) return "Borgware";
-    if (/subdermal|skinweave|armor|grip|hidden holster|shift tact|techhair|light tattoo|chemskin|biomonitor/.test(l)) return /techhair|tattoo|chemskin|biomonitor|shift tact/.test(l) ? "Fashionware" : "External Cyberware";
-    return "Internal Cyberware";
+  /* ---------------- cyberware (CR p. 358–366) ---------------- */
+  // [pattern, slot or group, foundational?]; eye/arm/leg resolve to a side from the text
+  const CAT = [
+    [/neural link/i, "Neural Link", 1], [/interface plugs?|wrist plugs/i, "Neural Link", 0], [/chipware socket/i, "Neural Link", 0],
+    [/kerenzikov|sandevistan|braindance recorder|pain editor|skill ?chip|memory chip|olfactory boost|tactile boost|chemical analy[sz]er/i, "Neural Link", 0],
+    [/cyberaudio suite|audio suite|cyberaudio/i, "Cyberaudio Suite", 1],
+    [/internal agent|audio recorder|bug detector|level damper|radio communicator|amplified hearing|homing tracer|radio scanner|music player|radar detector|scrambler|voice stress/i, "Cyberaudio Suite", 0],
+    [/cybereyes?|kiroshis?/i, "eye", 1],
+    [/low[- ]?light|infrared|\buv\b|teleoptics|microoptics|microvideo|chyron|virtuality|colou?r shift|anti-dazzle|image enhance|targeting scope|radiation detector|dartgun/i, "eye", 0],
+    [/cyberarms?/i, "arm", 1],
+    [/grapple hand|popup|realskinn|tool hand|big knucks|rippers|scratchers|wolvers|slice 'n dice|quick change mount|superchrome|medscanner|techscanner/i, "arm", 0],
+    [/cyberlegs?/i, "leg", 1], [/grip foot|jump booster|skate foot|talon foot|web foot/i, "leg", 0],
+    [/biomonitor|chemskin|emp threading|light tattoo|shift tacts|skinwatch|techhair/i, "Fashionware", 1],
+    [/nasal filters?|toxin binders?|enhanced antibodies|contraceptive implant|cybersnake|\bgills\b|grafted muscle|independent air|midnight lady|mr\.? studd|radar\/sonar|vampyres|audiovox/i, "Internal Cyberware", 1],
+    [/hidden holster|skin ?weave|subdermal (armor|pocket|grip)|reinforced knuckles/i, "External Cyberware", 1],
+    [/linear frame|artificial shoulder|multioptic mount|sensor array|borgware/i, "Borgware", 1]
+  ].map(([re, slot, f]) => ({ re, slot, f: !!f, label: s => plain(s).replace(/^[··—–-]\s*/, "").trim() }));
+  function catOf(s) { const p = plain(s).replace(/\([^)]*\)/g, " "); return CAT.find(c => c.re.test(p)) || null; }
+  const baseName = (c, name) => SIDED[c.slot] && c.f ? SIDED[c.slot] : plain(name).replace(/^[·\u00b7—–-]\s*/, "").replace(/\s*\([^)]*\)/g, "").replace(/,\s*(left|right)\b.*$/i, "").trim();
+  const parens = name => (plain(name).match(/\([^)]*\)/g) || []).join(" ");
+  // a table's Notes cell often lists the options: "Low-Light / Infrared / UV · TeleOptics · one slot free"
+  function splitOptions(c, notes) {
+    const opts = [], left = [];
+    for (const seg of plain(notes).split(/\s+·\s+/)) {
+      const o = catOf(seg);
+      if (o && !o.f && o.slot === c.slot) { const nm = seg.split(/\s*(?:\.\s|\s—\s|\()/)[0].trim(); opts.push({ c: o, name: nm, data: seg.slice(nm.length).replace(/^[\s.—–-]+/, "").replace(/^\((.*)\)$/, "$1") }); }
+      else if (has(seg)) left.push(seg);
+    }
+    return { opts, left: left.join(" · ") };
+  }
+  function piece2side(s) { const l = plain(s).toLowerCase(); return /\bpaired\b|\bboth\b|cybereyes|kiroshis/.test(l) ? "both" : /\bleft\b/.test(l) ? "Left" : /\bright\b/.test(l) ? "Right" : ""; }
+  const SIDED = { eye: "Cybereye", arm: "Cyberarm", leg: "Cyberleg" };
+  function cyberCount(M) { return Object.values(M.cyber).reduce((a, l) => a + l.length, 0); }
+  // put one item in its slot(s); ctx remembers the last foundational slots per group so options attach to them
+  function placeCyber(M, c, name, side, data, ctx) {
+    let slots;
+    if (SIDED[c.slot]) {
+      if (c.f || !ctx[c.slot]) {
+        const base = SIDED[c.slot];
+        slots = side === "both" ? ["Right " + base, "Left " + base] : side ? [side + " " + base] : [base + " (side not on the sheet)"];
+        if (c.f) ctx[c.slot] = slots;
+      } else slots = ctx[c.slot];
+    } else slots = [c.slot];
+    for (const s of slots) (M.cyber[s] = M.cyber[s] || []).push({ name, data, opt: !c.f });
+  }
+  const NOT_IN = /not installed|declined|not asked|not this week|eventually|scheduled|deferred|offered|pending/i;
+  function cyberLines(M, lines, where) { // bullet lists (nested bullets add to the item above)
+    const ctx = {}; let last = null, lastIndent = -1; const left = [];
+    for (const raw of lines) {
+      const b = /^(\s*)[-*+]\s+(.*)$/.exec(raw); if (!b) { left.push(raw); continue; }
+      const indent = b[1].length, line = b[2];
+      if (last && indent > lastIndent) { last.data = [last.data, plain(line)].filter(has).join(" · "); continue; }
+      if (/^\s*(\*\*)?no\s/i.test(line)) { M.cyberStatus.push(plain(line).replace(/[;.]$/, "")); last = null; continue; }
+      const segs = [...line.matchAll(/\*\*(.+?)\*\*/g)].map(m => m[1]);
+      if (!segs.length || /:\s*$/.test(segs[0]) || /^\*\*[^*]+:\*\*/.test(line.trim())) { left.push(raw); last = null; continue; } // "**Her rule:** …" is a note
+      const pieces = []; for (const sg of segs) for (const p of sg.split(/\s+\+\s+/)) { const c = catOf(p); if (c) pieces.push({ c, p }); }
+      let rest = plain(segs.length ? line.replace("**" + segs[0] + "**", "") : line).replace(/^[\s,—–:-]+/, "");
+      if (/GM's discretion/i.test(line)) rest = "Not settled on the sheet (GM's discretion): " + rest;
+      if (NOT_IN.test(line) && !/installed day/i.test(line)) { pieces.forEach(x => M.cyberPending.push({ name: x.c.label(x.p), status: "Not installed", note: plain(line) })); last = null; continue; }
+      if (!pieces.length) { (M.cyber["Listed under Cyberware"] = M.cyber["Listed under Cyberware"] || []).push(last = { name: plain(line).split(/[(—,]/)[0].trim(), data: plain(line), opt: false }); lastIndent = indent; continue; }
+      const side = piece2side(segs[0] || line) || piece2side(line);
+      pieces.forEach((x, k) => placeCyber(M, x.c, baseName(x.c, x.p), side, k ? "" : [parens(x.p), rest].filter(has).join(" · "), ctx));
+      const n0 = baseName(pieces[0].c, pieces[0].p);
+      const list = M.cyber[Object.keys(M.cyber).find(s => M.cyber[s].some(i => i.name === n0))] || [];
+      last = list.find(i => i.name === n0) || null; lastIndent = indent;
+    }
+    if (where && left.length < lines.length) M.cyberSources.push(where);
+    return left;
+  }
+  function parseCyber(M, secs, used, take) {
+    for (const s of secs.filter(s => /CYBER/i.test(s.h))) {
+      take(s); const ctx = {};
+      for (const t of tables(s)) {
+        const c0 = col(t.head, /^(slot|piece|item|cyberware|installed|required)/); if (c0 < 0) continue;
+        const cin = col(t.head, /^installed/), cst = col(t.head, /^status/), chl = col(t.head, /^hl$/), cno = col(t.head, /^(notes?|where|data)/);
+        for (const r of t.rows) {
+          const name = plain(r[c0]); if (!has(name) || /^total$/i.test(name)) continue;
+          const inst = cin >= 0 && cin !== c0 ? plain(r[cin]) : "";
+          const extra = [chl >= 0 ? "HL " + plain(r[chl]) : "", cno >= 0 ? plain(r[cno]) : ""].filter(has).join(" · ");
+          const status = cst >= 0 ? plain(r[cst]) : "";
+          if (/^everything else/i.test(name)) { M.cyberStatus.push(`Everything else: ${[inst, extra].filter(has).join(" — ")}`); continue; }
+          if (/^(natural|no|none)\b/i.test(inst)) { M.cyberStatus.push(`${name}: ${[inst, extra].filter(has).join(" — ")}`); continue; }
+          if ((status && NOT_IN.test(status)) || /^optional/i.test(name)) {
+            const full = r.filter((_, i) => i !== c0).map(plain).filter(has).join(" · ");
+            for (const p of name.replace(/^optional[^—–-]*[—–-]\s*/i, "").split(/\s+\+\s+/)) M.cyberPending.push({ name: plain(p).replace(/\(.*$/, "").trim(), status: status || "Optional", note: full });
+            continue;
+          }
+          const c = catOf(name);
+          if (!c) { (M.cyber["Listed under Cyberware"] = M.cyber["Listed under Cyberware"] || []).push({ name, data: [inst, extra].filter(has).join(" · "), opt: false }); continue; }
+          const isOpt = /^[·\u00b7—–-]/.test(name.trim()) || !c.f;
+          const cc = isOpt && c.f ? Object.assign({}, c, { f: false }) : c;
+          const notes = cno >= 0 ? plain(r[cno]) : "";
+          const sp = !isOpt && notes ? splitOptions(c, notes) : { opts: [], left: notes };
+          const data = [parens(name), inst && !/^yes$/i.test(inst) ? inst : "", chl >= 0 ? "HL " + plain(r[chl]) : "", sp.left].filter(has).join(" · ");
+          const prevSlots = ctx[c.slot];
+          placeCyber(M, cc, baseName(cc, name), piece2side(name) || piece2side(inst), data, ctx);
+          sp.opts.forEach(o => placeCyber(M, o.c, o.name, "", o.data, ctx));
+          // "as above": the other eye's options again
+          if (/^as above/i.test(notes) && prevSlots && ctx[c.slot] !== prevSlots) {
+            const src = (M.cyber[prevSlots[0]] || []).filter(i => i.opt);
+            for (const sl of ctx[c.slot]) { const list = M.cyber[sl]; const f = list[list.length - 1]; f.data = f.data.replace(/(^| · )as above$/i, "").trim() || "as above"; src.forEach(i => list.push(Object.assign({}, i))); }
+          }
+        }
+      }
+      const prose = s.lines.filter(l => !/^\s*\|/.test(l));
+      const left = cyberLines(M, prose, "");
+      for (const l of left) if (/^\s*\*\*(NONE|Not established|No cyberware)/i.test(l)) M.cyberStatus.push(plain(l));
+      const rest = left.filter(l => !/^\s*\*\*(NONE|Not established|No cyberware)/i.test(l)).join("\n").trim();
+      if (rest) M.cyberText += (M.cyberText ? "\n\n" : "") + rest;
+    }
   }
 
   /* ---------------- flatten + diff (for history) ---------------- */
@@ -365,6 +471,8 @@
     Object.entries(M.armor).forEach(([loc, a]) => { put("armor." + loc + ".sp", a.sp); put("armor." + loc + ".type", a.type); put("armor." + loc + ".pen", a.pen); });
     put("rep", M.rep); put("ip", M.ip);
     Object.entries(M.cyber).forEach(([slot, list]) => list.forEach(c => put("cyber." + norm(slot) + "." + norm(c.name).slice(0, 40), plain(c.data) || "yes")));
+    M.cyberPending.forEach(c => put("cyberpending." + norm(c.name).slice(0, 40), c.status));
+    M.cyberStatus.forEach(x => put("cyberstatus." + norm(x).slice(0, 60), x));
     M.gear.forEach(([it, n]) => put("gear." + norm(plain(it)).slice(0, 40), plain(n).slice(0, 200) || "yes"));
     Object.entries(M.lifepath).forEach(([k, v]) => put("life." + norm(k), plain(v)));
     put("lifestyle", M.lifestyle);
@@ -467,11 +575,15 @@
   function page3(M) {
     const slot = s => {
       const list = M.cyber[s] || [];
-      return `<div class="rs-cy ${list.length ? "on" : ""}"><table class="rs-tab"><thead><tr><th>${s}</th><th>Data</th></tr></thead><tbody>${list.map(c => `<tr${K("cyber." + norm(s) + "." + norm(c.name).slice(0, 40))}><td>${c.opt ? "· " : ""}${mdi(c.name)}</td><td class="rs-note">${mdi(c.data)}</td></tr>`).join("") || `<tr><td colspan="2" class="rs-none">—</td></tr>`}</tbody></table></div>`;
+      return `<div class="rs-cy ${list.length ? "on" : ""}"><table class="rs-tab"><thead><tr><th>${esc(s)}</th><th>Data</th></tr></thead><tbody>${list.map(c => `<tr${K("cyber." + norm(s) + "." + norm(c.name).slice(0, 40))}><td class="${c.opt ? "rs-opt" : "rs-found"}">${c.opt ? "· " : ""}${esc(c.name)}</td><td class="rs-note">${mdi(c.data)}</td></tr>`).join("") || `<tr><td colspan="2" class="rs-none">—</td></tr>`}</tbody></table></div>`;
     };
+    const extra = Object.keys(M.cyber).filter(s => !CYBER_SLOTS.includes(s));
     return `<div class="rs-p3">
       <h4 class="rs-bar">Cyberware</h4>
-      <div class="rs-cygrid">${CYBER_SLOTS.map(slot).join("")}</div>
+      ${M.cyberStatus.length ? `<div class="rs-box rs-long"><div class="rs-lab">On the sheet</div><div class="rs-val"><ul class="rs-ul">${M.cyberStatus.map(x => `<li${K("cyberstatus." + norm(x).slice(0, 60))}>${mdi(x)}</li>`).join("")}</ul></div></div>` : ""}
+      <div class="rs-cygrid">${CYBER_SLOTS.map(slot).join("")}${extra.map(slot).join("")}</div>
+      ${M.cyberPending.length ? `<table class="rs-tab rs-pend"><thead><tr><th>Required · scheduled · offered — not installed</th><th>Status</th><th>From the sheet</th></tr></thead><tbody>${M.cyberPending.map(p => `<tr${K("cyberpending." + norm(p.name).slice(0, 40))}><td>${esc(p.name)}</td><td>${esc(p.status)}</td><td class="rs-note">${mdi(p.note)}</td></tr>`).join("")}</tbody></table>` : ""}
+      ${M.cyberSources.length ? `<p class="rs-hint">Also read from: ${esc(M.cyberSources.join("; "))}.</p>` : ""}
       ${has(M.cyberText) ? `<div class="rs-box rs-long"><div class="rs-lab">Cyberware notes from the sheet</div><div class="rs-val rs-md">${mdb(M.cyberText)}</div></div>` : ""}
     </div>`;
   }
