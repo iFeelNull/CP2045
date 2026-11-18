@@ -32,7 +32,7 @@ export default buildConfig({
   collections: [Users, Media, Entries, DatafortImages, DatafortFiles, SheetHistory],
   csrf: origins,
   // Largest single upload (PDF/EPUB attachments). Keep public/config.js maxFileMB equal.
-  upload: { limits: { fileSize: 100 * 1024 * 1024 } },
+  upload: { limits: { fileSize: 100 * 1024 * 1024 }, requestSizeLimit: 101 * 1024 * 1024 }, // whole multipart request: Payload defaults to ~50 MB
   editor: lexicalEditor(),
   secret: process.env.PAYLOAD_SECRET || '',
   typescript: {
