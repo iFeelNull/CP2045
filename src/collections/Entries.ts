@@ -1,0 +1,52 @@
+// Datafort entries: one row per PC, NPC, reference sheet, sourcebook or DLC,
+// plus one "meta" row for the campaign. Same shape as the old Supabase table
+// (floor + free-form JSON `data`), so the page and JSON backups are unchanged.
+import type { CollectionConfig } from 'payload'
+import { ownerField, ownerOnly, signedIn, stampOwner } from './datafortAccess'
+
+export const Entries: CollectionConfig = {
+  slug: 'entries',
+  labels: { singular: 'Datafort entry', plural: 'Datafort entries' },
+  admin: {
+    group: 'Datafort',
+    defaultColumns: ['floor', 'summary', 'owner', 'updatedAt'],
+    useAsTitle: 'summary',
+  },
+  access: { read: ownerOnly, create: signedIn, update: ownerOnly, delete: ownerOnly },
+  hooks: { beforeChange: [stampOwner] },
+  fields: [
+    {
+      name: 'floor',
+      type: 'select',
+      required: true,
+      index: true,
+      options: [
+        { label: 'PCs', value: 'pc' },
+        { label: 'NPCs', value: 'npc' },
+        { label: 'Reference sheets', value: 'sheets' },
+        { label: 'Sourcebooks', value: 'sourcebooks' },
+        { label: 'DLCs', value: 'dlc' },
+        { label: 'Canon', value: 'canon' },
+        { label: 'Campaign (meta)', value: 'meta' },
+      ],
+    },
+    { name: 'data', type: 'json', required: true, defaultValue: {} },
+    {
+      // Read-only label for the admin list, derived from the JSON (name/title).
+      name: 'summary',
+      type: 'text',
+      admin: { readOnly: true },
+      hooks: {
+        beforeChange: [
+          ({ siblingData }) => {
+            const d = (siblingData?.data ?? {}) as Record<string, unknown>
+            const pick = [d.handle, d.name, d.title].find((x) => typeof x === 'string' && x.trim())
+            return pick ? String(pick).slice(0, 120) : `(${siblingData?.floor ?? 'entry'})`
+          },
+        ],
+      },
+    },
+    ownerField,
+  ],
+  timestamps: true,
+}
