@@ -25,6 +25,16 @@ function context(text: string, at: number): string {
   return ''
 }
 
+/** PDF-VIEW v1: the nearest PDF page marker above a hit ('## PDF Page N', '<!-- PDF page N -->', 'PDF p.N'); 0 if none. */
+const PAGE_RE = /(?:^#{1,6}\s*PDF\s*Page\s*(\d+)|<!--\s*PDF\s*page\s*(\d+)\s*-->|PDF\s*p\.\s*(\d+))/gim
+function pageAt(text: string, at: number): number {
+  const s = text.slice(Math.max(0, at - 400000), at)
+  let n = 0, m: RegExpExecArray | null
+  PAGE_RE.lastIndex = 0
+  while ((m = PAGE_RE.exec(s))) n = Number(m[1] || m[2] || m[3]) || n
+  return n
+}
+
 export const entriesSearch: PayloadHandler = async (req) => {
   if (!req.user) {
     return Response.json({ errors: [{ message: 'You are not allowed to perform this action.' }] }, { status: 403 })
@@ -60,7 +70,7 @@ export const entriesSearch: PayloadHandler = async (req) => {
       let a = Math.max(0, i - PAD), b = Math.min(t.length, i + PAD)
       const sa = t.lastIndexOf(' ', i - PAD + 15); if (sa > a) a = sa + 1
       const sb = t.indexOf(' ', i + PAD - 15); if (sb > 0 && sb < b) b = sb
-      return { at: i, s: t.slice(a, b).replace(/\s+/g, ' ').trim(), ctx: context(t, i) }
+      return { at: i, s: t.slice(a, b).replace(/\s+/g, ' ').trim(), ctx: context(t, i), page: pageAt(t, i) }
     })
     docs.push({ id: d.id, hits, snips })
   }

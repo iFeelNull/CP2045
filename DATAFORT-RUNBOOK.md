@@ -373,3 +373,18 @@ All floors also have **Match** (all words / exact phrase) and **Order** (most hi
 
 - **Source PDFs (Nov 18 2026):** the Core Rulebook v1.25, Black Chrome, Your New Best Friend, Interface RED Vols 1–5 (one DLC entry per volume, "Interface RED Vol N (PDF)") and the Edgerunners Mission Kit handbook (Sourcebooks; not ruled in) are attached as PDFs from `~/Documents/games/Cyberpunk 2045/sources/`. The extras bundle is `~/datafort-days/sources-pdf/bundle` (`stage.sh` rebuilds it). Your New Best Friend's page-marked text is in `~/Downloads/sources/`, so the daily builder keeps filing it. To extract another PDF: `python3 tools/floor-search-kit/mktext.py PDF OUT.md "Title"`.
 - **Uploads over ~50 MB** failed with HTTP 413 "Multipart request size limit": Payload caps the whole multipart request separately from `upload.limits.fileSize`. `payload.config.ts` now sets `upload.requestSizeLimit` to 101 MB; keep it just above `fileSize`.
+
+## 12 · PDF view (PDF-VIEW v1, Nov 18 2026)
+
+- **An entry with a PDF attached shows the PDF itself.** Its details sit at the top and the PDF is embedded below in the browser's own viewer: click into it, then Ctrl+F searches the book. **Open in tab** and **Download** sit above it. Entries without a PDF (the errata text, the rules locator, the district index, the sheets, canon) keep the full-text view.
+- **Search hits open the PDF at their page.** Each snippet carries the nearest page marker in the text (`## PDF Page N`, `<!-- PDF page N -->`, `PDF p.N`) and shows it as "PDF page N". Clicking it, or clicking the row while a search is active, opens the PDF at that page.
+- **The search text has to match the PDF's pages.** The Core Rulebook and Black Chrome texts already do (checked: their markers sit on the same PDF page). For every other PDF, page-marked text is extracted from the PDF itself (`tools/floor-search-kit/mktext.py`) and kept in `~/datafort-days/pdf-text/`. That folder is searched **first**, so the daily build becomes:
+
+  ```
+  DATAFORT_SOURCES=~/datafort-days/pdf-text:~/Downloads/sources:~/Downloads/CP2045-archive-day103/CP2045/sources:~/Downloads \
+    python3 tools/packet-to-bundle.py PACKET OUTDIR
+  ```
+
+  Interface RED is filed per volume ("Interface RED Vol N (PDF)", each with its own PDF and text). The combined "Interface RED Vols 1–5" entry carries only a pointer, so its hits aren't counted twice.
+- **PDFs attached:** Core Rulebook v1.25, Black Chrome, Black Chrome+, Danger Gal Dossier+ (the 119 MB base Dossier is over the 100 MB limit), Invented Tech, Your New Best Friend, No Place Like Home, the VoR guide, the Netrunning Deck errata, Interface RED Vols 1–5, the Night City Atlas v1.01, the 2045 Atlas poster, Night Market Index v1.24, Rockerboy Index and the Edgerunners handbook. Extras bundles: `~/datafort-days/sources-pdf/bundle` and `bundle2` (`stage.sh`, `stage2.sh`).
+- **Installer:** `tools/floor-search-kit/add_pdf_view.py PROJECT_DIR` (needs FLOOR-SEARCH v1; refuses to run twice; keeps `.pre-pdf-view` copies).

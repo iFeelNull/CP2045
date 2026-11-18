@@ -690,6 +690,13 @@ select {
 .fulltext { white-space: pre-wrap; word-break: break-word; margin: 0; padding: 14px 16px; font: 13px/1.55 var(--f-mono);
   color: var(--fg); background: var(--field); border: 1px solid var(--line); }
 .fulltext mark { background: var(--accent-2); color: var(--on-accent); padding: 0 1px; }
+/* PDF-VIEW v1 */
+.d-pdf { margin-top: 18px; }
+.pdf-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.pdf-bar .eyebrow { margin: 0; }
+.pdf-acts { display: flex; gap: 8px; }
+.pdf-tip { margin: 6px 0 10px; font-size: .78rem; color: var(--dim); }
+.pdf-frame { display: block; width: 100%; height: max(78vh, 560px); border: 1px solid var(--line); background: #2a2a2e; }
 /* FLOOR-SEARCH v1 */
 .findbar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: end; gap: 10px 14px; margin: 2px 0 0; padding: 10px 12px; border: 1px solid var(--line); }
 .findbar[hidden] { display: none; }
@@ -1498,7 +1505,7 @@ function renderRoster() {
     const lead = f.thumb ? thumbHTML(r[f.thumb], name, "th") : `<span class="row-tag">${pad(r.seq || 0, 3)}</span>`;
     const hit = live ? FT.res.get(r.id) : null;
     const snips = hit && hit.snips && hit.snips.length
-      ? `<div class="snips">${hit.snips.map(sn => `<button type="button" class="snip" data-id="${esc(r.id)}" data-at="${+sn.at || 0}">${has(sn.ctx) ? `<b>${esc(sn.ctx)}</b>` : ""}${snipHTML(sn.s)}</button>`).join("")}</div>` : "";
+      ? `<div class="snips">${hit.snips.map(sn => `<button type="button" class="snip" data-id="${esc(r.id)}" data-at="${+sn.at || 0}" data-page="${+sn.page || 0}">${has(sn.ctx) || +sn.page ? `<b>${esc([sn.ctx, +sn.page && !/PDF\s*(page|p\.)\s*\d/i.test(sn.ctx || "") ? "PDF page " + sn.page : ""].filter(Boolean).join(" · "))}</b>` : ""}${snipHTML(sn.s)}</button>`).join("")}</div>` : "";
     return `<li><button type="button" class="row" data-id="${esc(r.id)}" ${S.sel[f.key] === r.id ? 'aria-current="true"' : ""}>
       ${lead}
       <span class="row-main"><span class="row-code">${code(f, r)}</span><span class="row-name">${esc(name)}</span><span class="row-sub">${esc(sub) || "&nbsp;"}</span></span>
@@ -1634,17 +1641,38 @@ function thumbHTML(val, name, cls) {
     }
   };
 
-  function renderDetail() {
-    const f = cur(), r = S.data[f.key].find(x => x.id === S.sel[f.key]);
-    const d = $("#detail");
-    if (!r) { d.innerHTML = ""; return; }
-    d.innerHTML = barHTML(f, r, false) + `<article class="d-body">${READ[f.key](f, r)}` +
-      (isSheet(f, r) ? `<section class="rs-host"></section>` : r._tl ? `<section class="d-text"><p class="eyebrow">Full text · loading…</p></section>` : "") + `</article>`;
-    d.scrollTop = 0;
-    if (isSheet(f, r)) mountSheet(r); else if (r._tl) loadText(f, r);
+  /* PDF-VIEW v1: an entry with a PDF shows the PDF itself under its details */
+function pdfOf(r) {
+  const p = refParse(r.file);
+  return p && p.col === FILES && /\.pdf$/i.test(r.fileName || p.name) ? refUrl(r.file) : "";
+}
+function pdfHTML(r, url, page) {
+  const q = qTerms().join(" "), name = r.fileName || (refParse(r.file) || {}).name || "PDF";
+  const hash = "#" + [page ? "page=" + page : "", "view=FitH", q ? "search=" + encodeURIComponent(q) : ""].filter(Boolean).join("&");
+  return `<section class="d-pdf"><div class="pdf-bar"><p class="eyebrow">PDF · ${esc(name)}${r.fileSize ? " · " + fmtSize(r.fileSize) : ""}${page ? " · opened at page " + page : ""}</p>` +
+    `<span class="pdf-acts"><a class="btn ghost sm" href="${esc(url + hash)}" target="_blank" rel="noopener noreferrer">Open in tab &#x2197;</a><a class="btn ghost sm" href="${esc(url)}" download="${esc(name)}">Download</a></span></div>` +
+    `<p class="pdf-tip">To search inside the book: click the PDF, then Ctrl+F.${q ? " Search hits above open it at their page." : ""}</p>` +
+    `<iframe class="pdf-frame" src="${esc(url + hash)}" title="${esc(name)}"></iframe></section>`;
+}
+function renderDetail() {
+  const f = cur(), r = S.data[f.key].find(x => x.id === S.sel[f.key]);
+  const d = $("#detail");
+  if (!r) { d.innerHTML = ""; return; }
+  const sheet = isSheet(f, r), pdf = sheet ? "" : pdfOf(r);
+  let page = 0;
+  if (pdf) {
+    if (S.jump && S.jump.id === r.id && +S.jump.page) page = +S.jump.page;
+    else if (S.q.trim() && FT.floor === f.key && FT.key === ftKey()) { const h = FT.res.get(r.id), s0 = h && h.snips && h.snips[0]; if (s0 && +s0.page) page = +s0.page; }
+    S.jump = null;
   }
+  d.innerHTML = barHTML(f, r, false) + `<article class="d-body">${READ[f.key](f, r)}` +
+    (sheet ? `<section class="rs-host"></section>` : pdf ? pdfHTML(r, pdf, page) : r._tl ? `<section class="d-text"><p class="eyebrow">Full text · loading…</p></section>` : "") + `</article>`;
+  if (pdf) d.querySelectorAll(".d-body > .book-file").forEach(e => e.remove());
+  d.scrollTop = 0;
+  if (sheet) mountSheet(r); else if (!pdf && r._tl) loadText(f, r);
+}
 
-  /* RED-SHEET v1.4: PCs and NPCs with a sheet open as the official RED character sheet (public/sheet.js) */
+/* RED-SHEET v1.4: PCs and NPCs with a sheet open as the official RED character sheet (public/sheet.js) */
 function isSheet(f, r) { return (f.key === "pc" || f.key === "npc") && !!r._tl && !!window.RedSheet; }
 async function sheetText(id) {
   let t = TEXT.get(id);
@@ -2003,7 +2031,7 @@ $("#findbar").addEventListener("click", e => {
   $("#roster").addEventListener("click", e => {
     const b = e.target.closest("[data-id]"); if (!b) return;
     if (S.editing && S.dirty) { toast("Save or cancel your changes first.", true); return; }
-    S.editing = null; S.sel[S.floor] = b.dataset.id; S.view = "detail"; S.jump = b.dataset.at ? { id: b.dataset.id, at: +b.dataset.at } : null;
+    S.editing = null; S.sel[S.floor] = b.dataset.id; S.view = "detail"; S.jump = b.dataset.at ? { id: b.dataset.id, at: +b.dataset.at, page: +b.dataset.page || 0 } : null;
     renderRoster(); renderDetail(); syncView();
     if (mobileMQ.matches) $("#detail").querySelector(".back")?.focus();
   });
