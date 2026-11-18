@@ -1,0 +1,17 @@
+/* FLOOR-SEARCH v1 */
+.findbar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: end; gap: 10px 14px; margin: 2px 0 0; padding: 10px 12px; border: 1px solid var(--line); }
+.findbar[hidden] { display: none; }
+.fb-f { display: grid; gap: 4px; min-width: 0; font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.fb-f select, .fb-f input { font: inherit; font-size: .85rem; letter-spacing: 0; text-transform: none; color: var(--fg); background: transparent; border: 1px solid var(--line); padding: 6px 8px; max-width: 16rem; }
+.fb-f select option { color: #000; }
+.fb-n input { width: 6.5em; }
+.fb-clear { align-self: end; }
+.fb-stat { flex: 1 1 100%; margin: 0; font-size: .78rem; color: var(--dim); }
+.fb-stat:empty { display: none; }
+.row-hits { align-self: center; font-variant-numeric: tabular-nums; font-size: .78rem; padding: 2px 8px; border: 1px solid var(--accent); color: var(--accent); white-space: nowrap; }
+.snips { display: grid; gap: 2px; padding: 2px 0 10px 14px; }
+.snip { all: unset; box-sizing: border-box; cursor: pointer; display: block; font-size: .8rem; line-height: 1.45; color: var(--dim); padding: 4px 8px; border-left: 2px solid var(--line); overflow-wrap: anywhere; }
+.snip:hover, .snip:focus-visible { color: var(--fg); border-left-color: var(--accent); outline: none; }
+.snip b { display: block; font-weight: 600; font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; color: var(--accent-2); }
+.snip mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; }
+.fulltext mark.hot { outline: 2px solid var(--accent); outline-offset: 1px; }

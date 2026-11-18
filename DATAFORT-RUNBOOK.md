@@ -342,3 +342,31 @@ python3 tools/datafort-sync.py ~/datafort-days/<X>/bundle --prune npc --apply   
 - A new value to track in history: add it to `flatten()` and tag the rendered cell with `K("<key>")`.
 - Collection or hook changes (`src/collections/SheetHistory.ts`) need a stack restart.
 - Installer: `tools/add_sheet_view.py PROJECT_DIR` (idempotent; re-labels for SELinux).
+
+
+## 11 · Floor search (FLOOR-SEARCH v1, Nov 18 2026)
+
+Every floor has its own search bar under its header, next to the search box:
+
+| Floor | Look in | Filters |
+|---|---|---|
+| F01 PCs | name & sheet / sheet text / name & role | Status |
+| F02 NPCs | name & sheet / sheet text / name & role | Sex, State, Status (shown when they vary) |
+| F03 Reference sheets | title & text / sheet text / title & note | Category |
+| F04 Sourcebooks | shelf & book text / inside the books / shelf | Book, Format |
+| F05 DLCs | list & DLC text / inside the DLCs / list | Type, DLC, Status |
+| F06 Canon | title & day text / day text / title & date | Month, Kind, From day / To day |
+
+All floors also have **Match** (all words / exact phrase) and **Order** (most hits first / filed order). **Clear** resets the floor.
+
+- **Text hits** come from `GET /api/entries/search?floor=&q=&mode=all|phrase` (`src/collections/entriesSearch.ts`, owner-only, registered in `Entries.ts`). It returns a hit count and up to 3 snippets per entry. Each snippet is labelled with the scene stamp (time · place) or heading it sits under. Clicking a snippet opens the entry at that hit; on PC and NPC sheets the terms are highlighted.
+- **Sourcebook and DLC text:** `packet-to-bundle.py` files the text of the .md/.txt sources it finds in `DATAFORT_SOURCES` (folders separated by colons; default `~/Downloads/sources`). At each close, build the bundle with:
+
+  ```
+  DATAFORT_SOURCES=~/Downloads/sources:~/Downloads/CP2045-archive-day103/CP2045/sources:~/Downloads \
+    python3 tools/packet-to-bundle.py PACKET OUTDIR
+  ```
+
+  A source it can't find keeps the text already filed (the sync only sends text it has). PDF-only sources (No Place Like Home, the Atlas, Night Market Index, the VoR guide, Your New Best Friend, the Netrunning Deck errata) stay catalogue-only until a .md/.txt copy exists.
+- **Smoke test:** `python3 tools/floor-search-kit/fstest.py "canon:blue lighter:phrase" "sourcebooks:Kiroshi"`. It uses the API key file and prints only counts and snippets.
+- **Re-apply** on a fresh checkout: `python3 tools/floor-search-kit/add_floor_search.py ~/projects/payload tools/floor-search-kit`. It refuses to run twice and keeps `.pre-floor-search` copies.

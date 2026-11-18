@@ -690,6 +690,24 @@ select {
 .fulltext { white-space: pre-wrap; word-break: break-word; margin: 0; padding: 14px 16px; font: 13px/1.55 var(--f-mono);
   color: var(--fg); background: var(--field); border: 1px solid var(--line); }
 .fulltext mark { background: var(--accent-2); color: var(--on-accent); padding: 0 1px; }
+/* FLOOR-SEARCH v1 */
+.findbar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: end; gap: 10px 14px; margin: 2px 0 0; padding: 10px 12px; border: 1px solid var(--line); }
+.findbar[hidden] { display: none; }
+.fb-f { display: grid; gap: 4px; min-width: 0; font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.fb-f select, .fb-f input { font: inherit; font-size: .85rem; letter-spacing: 0; text-transform: none; color: var(--fg); background: transparent; border: 1px solid var(--line); padding: 6px 8px; max-width: 16rem; }
+.fb-f select option { color: #000; }
+.fb-n input { width: 6.5em; }
+.fb-clear { align-self: end; }
+.fb-stat { flex: 1 1 100%; margin: 0; font-size: .78rem; color: var(--dim); }
+.fb-stat:empty { display: none; }
+.row-hits { align-self: center; font-variant-numeric: tabular-nums; font-size: .78rem; padding: 2px 8px; border: 1px solid var(--accent); color: var(--accent); white-space: nowrap; }
+.snips { display: grid; gap: 2px; padding: 2px 0 10px 14px; }
+.snip { all: unset; box-sizing: border-box; cursor: pointer; display: block; font-size: .8rem; line-height: 1.45; color: var(--dim); padding: 4px 8px; border-left: 2px solid var(--line); overflow-wrap: anywhere; }
+.snip:hover, .snip:focus-visible { color: var(--fg); border-left-color: var(--accent); outline: none; }
+.snip b { display: block; font-weight: 600; font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; color: var(--accent-2); }
+.snip mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; }
+.fulltext mark.hot { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 </style>
 <link rel="stylesheet" href="sheet.css?v=15">
 </head>
@@ -740,6 +758,7 @@ select {
         <label class="search"><span class="sr">Search this floor</span><input type="search" id="search" placeholder="Search" autocomplete="off"></label>
         <button type="button" class="btn primary" id="new-btn">+ New</button>
       </div>
+      <div class="findbar" id="findbar" hidden></div>
     </header>
     <div class="floor-body" id="floor-body">
       <section class="roster hud" id="roster" aria-label="Entries on this floor"></section>
@@ -776,6 +795,7 @@ select {
 <script src="config.js"></script>
 <script src="sheet.js?v=15"></script>
 <script>
+/* FLOOR-SEARCH v1 */
 (function () {
   "use strict";
   const $ = s => document.querySelector(s);
@@ -938,6 +958,32 @@ select {
     }
   ];
   const FL = Object.fromEntries(FLOORS.map((f, i) => [f.key, Object.assign(f, { num: pad(i + 1) })]));
+
+/* ================= FLOOR-SEARCH v1: each floor's own search kit ================= */
+// scopes: where the query looks (catalogue fields, the server-side full text, or both);
+// filters: per-floor narrowing from the floor's own data; days: canon's play-day range.
+const monthOf = w => { const m = String(w || "").match(/([A-Z][a-z]+)\s+\d{1,2},\s*(\d{4})/); return m ? m[1] + " " + m[2] : ""; };
+const npcNote = (r, re) => { const m = String(r.notes || "").match(re); return m ? m[1] : ""; };
+const FIND = {
+  pc: { scopes: [["all", "Name & sheet"], ["text", "Sheet text only"], ["fields", "Name & role only"]],
+    filters: [{ k: "status", label: "Status", get: r => r.status }] },
+  npc: { scopes: [["all", "Name & sheet"], ["text", "Sheet text only"], ["fields", "Name & role only"]],
+    filters: [
+      { k: "sex", label: "Sex", get: r => npcNote(r, /Sex:\s*([A-Za-z]+)/) },
+      { k: "life", label: "State", get: r => npcNote(r, /^(Living|Dead|Deceased|Flatlined|Missing|Unknown)\b/) },
+      { k: "status", label: "Status", get: r => r.status }] },
+  sheets: { scopes: [["all", "Title & text"], ["text", "Sheet text only"], ["fields", "Title & note only"]],
+    filters: [{ k: "category", label: "Category", get: r => r.category }] },
+  sourcebooks: { scopes: [["all", "Shelf & book text"], ["text", "Inside the books"], ["fields", "Shelf only"]],
+    filters: [{ k: "book", label: "Book", get: r => r.title, order: "first" }, { k: "format", label: "Format", get: r => r.format }] },
+  dlc: { scopes: [["all", "List & DLC text"], ["text", "Inside the DLCs"], ["fields", "List only"]],
+    filters: [{ k: "type", label: "Type", get: r => r.type }, { k: "book", label: "DLC", get: r => r.title, order: "first" }, { k: "status", label: "Status", get: r => r.status }] },
+  canon: { scopes: [["all", "Title & day text"], ["text", "Day text only"], ["fields", "Title & date only"]],
+    filters: [{ k: "month", label: "Month", get: r => monthOf(r.when), order: "first" }, { k: "kind", label: "Kind", get: r => r.kind }],
+    days: true }
+};
+const FS = {};
+FLOORS.forEach(f => { f.find = FIND[f.key]; FS[f.key] = { scope: "all", mode: "all", sort: "hits", f: {}, from: "", to: "" }; });
 
   const ERA = { year: "2045", name: "Ashes", log: ["Old NET offline · local only", "Scavenged deck stable", "ICE sweep clear", "Datafort mapped · 6 floors"] };
 
@@ -1299,6 +1345,7 @@ select {
     $("#search").placeholder = f.ph;
     const nb = $("#new-btn"); nb.textContent = "+ " + f.newLabel; nb.hidden = !canEditNow();
     $("#search").parentElement.hidden = n === 0;
+    renderFind();
     document.title = "NXROOT // Datafort";
   }
 
@@ -1335,56 +1382,132 @@ select {
       ${!loading && S.canWrite && canEditNow() ? `<button type="button" class="btn primary" data-act="new">+ ${esc(f.newLabel)}</button>` : ""}`;
   }
 
-  /* full-text search: Postgres ILIKE over Entries.text for the current floor (words AND-ed by Payload's "like") */
-  const FT = { floor: null, q: "", ids: new Set(), timer: 0, seq: 0 };
-  function ftSearch() {
-    clearTimeout(FT.timer);
-    const f = cur(), q = S.q.trim();
-    if (S.mode !== "net" || q.length < 3 || !S.data[f.key].some(r => r._tl)) { FT.floor = null; FT.q = ""; FT.ids = new Set(); return; }
-    FT.timer = setTimeout(async () => {
-      const my = ++FT.seq;
-      try {
-        const j = await API.http("GET", "/api/entries?pagination=false&depth=0&select[floor]=true&where[floor][equals]=" +
-          encodeURIComponent(f.key) + "&where[text][like]=" + encodeURIComponent(q));
-        if (my !== FT.seq) return;
-        FT.floor = f.key; FT.q = q.toLowerCase(); FT.ids = new Set((j.docs || []).map(d => String(d.id)));
-        renderRoster();
-        const r = S.data[f.key].find(x => x.id === S.sel[f.key]);
-        if (r && r._tl && !S.editing) (isSheet(f, r) ? mountSheet(r) : loadText(f, r));
-      } catch (e) { if (my === FT.seq) toast(errMsg(e), true); }
-    }, 300);
+  /* full-text search (FLOOR-SEARCH v1): /api/entries/search returns hits and snippets per entry for the current floor */
+const FT = { floor: null, key: "", ids: new Set(), res: new Map(), timer: 0, seq: 0, busy: false };
+const ftKey = () => S.q.trim().toLowerCase() + "\u0001" + (FS[S.floor] ? FS[S.floor].mode : "all");
+function qTerms() {
+  const q = S.q.trim().toLowerCase(); if (!q) return [];
+  return FS[S.floor] && FS[S.floor].mode === "phrase" ? [q] : q.split(/\s+/).filter(w => w.length > 1);
+}
+function filtersOn(f) { const s = FS[f.key]; return Object.values(s.f).some(has) || has(s.from) || has(s.to); }
+function passFilters(f, r) {
+  const s = FS[f.key], fd = f.find || {};
+  for (const x of fd.filters || []) { const want = s.f[x.k]; if (has(want) && String(x.get(r) || "") !== want) return false; }
+  if (fd.days && (has(s.from) || has(s.to))) {
+    const d = parseInt(r.day, 10); if (!isFinite(d)) return false;
+    if (has(s.from) && d < +s.from) return false;
+    if (has(s.to) && d > +s.to) return false;
   }
-  function matches(f, r, q) {
-    if (!q) return true;
-    if (FT.floor === f.key && FT.q === q && FT.ids.has(r.id)) return true;
-    const hay = [r[f.primary], ...(f.sub(r) || []), r.name, f.badge(r), code(f, r), ...((f.search && f.search(r)) || [])].filter(has).join(" ").toLowerCase();
-    return hay.includes(q);
+  return true;
+}
+function renderFind() {
+  const f = cur(), fd = f.find, el = $("#findbar"); if (!el) return;
+  const list = S.data[f.key];
+  if (!fd || !list.length) { el.hidden = true; el.innerHTML = ""; return; }
+  const s = FS[f.key], ft = list.some(r => r._tl);
+  const sel = (id, label, val, opts) => `<label class="fb-f"><span>${esc(label)}</span><select data-fb="${esc(id)}">${opts.map(([v, t]) => `<option value="${esc(v)}" ${v === val ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>`;
+  let h = "";
+  if (ft) h += sel("scope", "Look in", s.scope, fd.scopes) + sel("mode", "Match", s.mode, [["all", "All words"], ["phrase", "Exact phrase"]]) + sel("sort", "Order", s.sort, [["hits", "Most hits first"], ["seq", "Filed order"]]);
+  for (const x of fd.filters || []) {
+    const cnt = new Map(); list.forEach(r => { const v = String(x.get(r) || ""); if (v) cnt.set(v, (cnt.get(v) || 0) + 1); });
+    if (cnt.size < 2 && !has(s.f[x.k])) continue;
+    const vals = [...cnt.keys()]; if (x.order !== "first") vals.sort((a, b) => a.localeCompare(b));
+    h += sel("f:" + x.k, x.label, s.f[x.k] || "", [["", "All"], ...vals.map(v => [v, v + " (" + cnt.get(v) + ")"])]);
   }
-
-  function renderRoster() {
-    const f = cur(), q = S.q.trim().toLowerCase();
-    const list = S.data[f.key].filter(r => matches(f, r, q));
-    const head = `<div class="roster-head"><span>Index</span><span>${q ? pad(list.length) + " of " : ""}${pad(S.data[f.key].length)} on file</span></div>`;
-    if (!list.length) { $("#roster").innerHTML = head + `<p class="no-match">No matches for “${esc(S.q.trim())}”.</p>`; return; }
-    if (f.cover) {
-      $("#roster").innerHTML = head + `<ul class="rows covers">${list.map(r => `<li><button type="button" class="cover-btn" data-id="${esc(r.id)}" ${S.sel[f.key] === r.id ? 'aria-current="true"' : ""}>
-        ${coverHTML(f, r)}<span class="row-main"><span class="row-name">${esc(r.title || "Untitled")}</span><span class="row-sub">${esc((f.sub(r) || []).filter(has).join(" · ")) || "&nbsp;"}</span></span>
-      </button></li>`).join("")}</ul>`;
-      return;
+  if (fd.days) {
+    const ds = list.map(r => parseInt(r.day, 10)).filter(isFinite);
+    if (ds.length) {
+      const lo = Math.min(...ds), hi = Math.max(...ds);
+      h += `<label class="fb-f fb-n"><span>From day</span><input type="number" inputmode="numeric" data-fb="from" min="${lo}" max="${hi}" placeholder="${lo}" value="${esc(s.from)}"></label>` +
+        `<label class="fb-f fb-n"><span>To day</span><input type="number" inputmode="numeric" data-fb="to" min="${lo}" max="${hi}" placeholder="${hi}" value="${esc(s.to)}"></label>`;
     }
-    $("#roster").innerHTML = head + `<ul class="rows">${list.map(r => {
-      const name = r[f.primary] || "Unnamed";
-      const sub = (f.sub(r) || []).filter(has).join(" · ");
-      const lead = f.thumb ? thumbHTML(r[f.thumb], name, "th") : `<span class="row-tag">${pad(r.seq || 0, 3)}</span>`;
-      return `<li><button type="button" class="row" data-id="${esc(r.id)}" ${S.sel[f.key] === r.id ? 'aria-current="true"' : ""}>
-        ${lead}
-        <span class="row-main"><span class="row-code">${code(f, r)}</span><span class="row-name">${esc(name)}</span><span class="row-sub">${esc(sub) || "&nbsp;"}</span></span>
-        ${pill(f.badge(r))}
-      </button></li>`;
-    }).join("")}</ul>`;
   }
+  h += `<button type="button" class="btn ghost sm fb-clear" data-fb-clear hidden>Clear</button><p class="fb-stat" id="fb-stat" aria-live="polite"></p>`;
+  el.innerHTML = h; el.hidden = false;
+  renderStat();
+}
+function renderStat() {
+  const el = $("#fb-stat"), f = cur(), q = S.q.trim();
+  const c = $("#findbar [data-fb-clear]"); if (c) c.hidden = !(filtersOn(f) || q);
+  if (!el) return;
+  if (FT.busy && q) { el.textContent = "Searching the text…"; return; }
+  if (q && FT.floor === f.key && FT.key === ftKey()) {
+    let h = 0, n = 0; FT.res.forEach((d, id) => { const r = S.data[f.key].find(x => x.id === id); if (r && passFilters(f, r)) { h += d.hits || 0; n++; } });
+    el.textContent = `In the text: ${h} ${h === 1 ? "hit" : "hits"} across ${n} ${n === 1 ? "entry" : "entries"}${FS[f.key].mode === "phrase" ? " (exact phrase)" : ""}.`;
+    return;
+  }
+  el.textContent = q && q.length < 3 && S.data[f.key].some(r => r._tl) && FS[f.key].scope !== "fields" ? "Type 3 or more characters to search inside the text." : "";
+}
+function ftSearch() {
+  clearTimeout(FT.timer);
+  const f = cur(), q = S.q.trim(), s = FS[f.key];
+  if (S.mode !== "net" || q.length < 3 || s.scope === "fields" || !S.data[f.key].some(r => r._tl)) {
+    FT.floor = null; FT.key = ""; FT.ids = new Set(); FT.res = new Map(); FT.busy = false; ++FT.seq; return;
+  }
+  FT.busy = true;
+  FT.timer = setTimeout(async () => {
+    const my = ++FT.seq, key = ftKey(), fk = f.key;
+    try {
+      const j = await API.http("GET", "/api/entries/search?floor=" + encodeURIComponent(fk) + "&q=" + encodeURIComponent(q) + "&mode=" + encodeURIComponent(s.mode));
+      if (my !== FT.seq) return;
+      FT.floor = fk; FT.key = key; FT.busy = false;
+      FT.res = new Map((j.docs || []).map(d => [String(d.id), d])); FT.ids = new Set(FT.res.keys());
+      if (S.floor !== fk) return;
+      renderRoster();
+      const r = S.data[fk].find(x => x.id === S.sel[fk]);
+      if (r && r._tl && !S.editing) (isSheet(f, r) ? mountSheet(r) : loadText(f, r));
+    } catch (e) { if (my === FT.seq) { FT.busy = false; renderStat(); toast(errMsg(e), true); } }
+  }, 300);
+}
+function fieldHit(f, r, q) {
+  const hay = [r[f.primary], ...(f.sub(r) || []), r.name, f.badge(r), code(f, r), ...((f.search && f.search(r)) || [])].filter(has).join(" ").toLowerCase();
+  if (FS[f.key].mode === "phrase") return hay.includes(q);
+  return q.split(/\s+/).filter(Boolean).every(w => hay.includes(w));
+}
+function matches(f, r, q) {
+  if (!passFilters(f, r)) return false;
+  if (!q) return true;
+  const sc = FS[f.key].scope, inText = FT.floor === f.key && FT.key === ftKey() && FT.ids.has(r.id);
+  if (sc === "text") return inText;
+  if (sc === "fields") return fieldHit(f, r, q);
+  return inText || fieldHit(f, r, q);
+}
+function snipHTML(s) { const [h] = markText(s, qTerms()); return `<span class="snip-t">…${h}…</span>`; }
 
-  function thumbHTML(val, name, cls) {
+function renderRoster() {
+  const f = cur(), q = S.q.trim().toLowerCase(), s = FS[f.key];
+  let list = S.data[f.key].filter(r => matches(f, r, q));
+  const live = !!q && FT.floor === f.key && FT.key === ftKey();
+  if (live && s.sort === "hits") list = list.slice().sort((a, b) => ((FT.res.get(b.id) || {}).hits || 0) - ((FT.res.get(a.id) || {}).hits || 0));
+  const narrowed = !!q || filtersOn(f);
+  const head = `<div class="roster-head"><span>Index</span><span>${narrowed ? pad(list.length) + " of " : ""}${pad(S.data[f.key].length)} on file</span></div>`;
+  renderStat();
+  if (!list.length) {
+    $("#roster").innerHTML = head + `<p class="no-match">${FT.busy && q ? "Searching the text…" : q ? `No matches for “${esc(S.q.trim())}”.` : "Nothing on this floor fits those filters."}</p>`;
+    return;
+  }
+  if (f.cover && !narrowed) {
+    $("#roster").innerHTML = head + `<ul class="rows covers">${list.map(r => `<li><button type="button" class="cover-btn" data-id="${esc(r.id)}" ${S.sel[f.key] === r.id ? 'aria-current="true"' : ""}>
+      ${coverHTML(f, r)}<span class="row-main"><span class="row-name">${esc(r.title || "Untitled")}</span><span class="row-sub">${esc((f.sub(r) || []).filter(has).join(" · ")) || "&nbsp;"}</span></span>
+    </button></li>`).join("")}</ul>`;
+    return;
+  }
+  $("#roster").innerHTML = head + `<ul class="rows">${list.map(r => {
+    const name = r[f.primary] || "Unnamed";
+    const sub = (f.sub(r) || []).filter(has).join(" · ");
+    const lead = f.thumb ? thumbHTML(r[f.thumb], name, "th") : `<span class="row-tag">${pad(r.seq || 0, 3)}</span>`;
+    const hit = live ? FT.res.get(r.id) : null;
+    const snips = hit && hit.snips && hit.snips.length
+      ? `<div class="snips">${hit.snips.map(sn => `<button type="button" class="snip" data-id="${esc(r.id)}" data-at="${+sn.at || 0}">${has(sn.ctx) ? `<b>${esc(sn.ctx)}</b>` : ""}${snipHTML(sn.s)}</button>`).join("")}</div>` : "";
+    return `<li><button type="button" class="row" data-id="${esc(r.id)}" ${S.sel[f.key] === r.id ? 'aria-current="true"' : ""}>
+      ${lead}
+      <span class="row-main"><span class="row-code">${code(f, r)}</span><span class="row-name">${esc(name)}</span><span class="row-sub">${esc(sub) || "&nbsp;"}</span></span>
+      ${hit ? `<span class="row-hits" title="${hit.hits} ${hit.hits === 1 ? "hit" : "hits"} in the text">${hit.hits}×</span>` : pill(f.badge(r))}
+    </button>${snips}</li>`;
+  }).join("")}</ul>`;
+}
+
+function thumbHTML(val, name, cls) {
     const src = imgSrc(val);
     return `<span class="${cls}" data-ph>${src ? `<img src="${esc(src)}" alt="" loading="lazy">` : ""}<b>${esc(initials(name))}</b></span>`;
   }
@@ -1535,7 +1658,7 @@ function mountSheet(r) {
   const el = $("#detail .rs-host"); if (!el) return;
   window.RedSheet.mount(el, r, {
     http: (m, u) => API.http(m, u), text: sheetText, markText, fmtSize,
-    terms: () => S.q.trim().toLowerCase().split(/\s+/).filter(w => w.length > 1)
+    terms: () => qTerms()
   }).catch(e => { el.innerHTML = `<p class="eyebrow">Sheet</p><p>${esc(errMsg(e))}</p>`; });
 }
 
@@ -1552,21 +1675,28 @@ function mountSheet(r) {
     return [out + esc(t.slice(i)), n];
   }
   async function loadText(f, r) {
-    let t = TEXT.get(r.id);
-    if (t === undefined) {
-      try { t = (await API.http("GET", "/api/entries/" + encodeURIComponent(r.id) + "?depth=0&select[text]=true")).text || ""; }
-      catch (e) { const b = $("#detail .d-text"); if (b) b.innerHTML = `<p class="eyebrow">Full text</p><p>${esc(errMsg(e))}</p>`; return; }
-      TEXT.set(r.id, t); if (TEXT.size > 12) TEXT.delete(TEXT.keys().next().value);
-    }
-    const box = $("#detail .d-text");
-    if (!box || S.sel[f.key] !== r.id) return;          // the reader moved on while it loaded
-    const terms = S.q.trim().toLowerCase().split(/\s+/).filter(w => w.length > 1);
-    const [html, n] = markText(t, terms);
-    box.innerHTML = `<p class="eyebrow">Full text · ${fmtSize(t.length)}${terms.length ? " · " + n + (n === 1 ? " match" : " matches") : ""}</p><pre class="fulltext">${html}</pre>`;
-    const m = box.querySelector("mark"); if (m) m.scrollIntoView({ block: "center" });
+  let t = TEXT.get(r.id);
+  if (t === undefined) {
+    try { t = (await API.http("GET", "/api/entries/" + encodeURIComponent(r.id) + "?depth=0&select[text]=true")).text || ""; }
+    catch (e) { const b = $("#detail .d-text"); if (b) b.innerHTML = `<p class="eyebrow">Full text</p><p>${esc(errMsg(e))}</p>`; return; }
+    TEXT.set(r.id, t); if (TEXT.size > 12) TEXT.delete(TEXT.keys().next().value);
   }
+  const box = $("#detail .d-text");
+  if (!box || S.sel[f.key] !== r.id) return; // the reader moved on while it loaded
+  const terms = qTerms();
+  const [html, n] = markText(t, terms);
+  box.innerHTML = `<p class="eyebrow">Full text · ${fmtSize(t.length)}${terms.length ? " · " + n + (n === 1 ? " match" : " matches") : ""}</p><pre class="fulltext">${html}</pre>`;
+  const ms = box.querySelectorAll("mark");
+  let k = 0;
+  if (S.jump && S.jump.id === r.id && terms.length) { // a snippet was clicked: go to that hit
+    const re = new RegExp(terms.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi");
+    k = (t.slice(0, S.jump.at).match(re) || []).length;
+  }
+  S.jump = null;
+  const m = ms[k] || ms[0]; if (m) { m.classList.add("hot"); m.scrollIntoView({ block: "center" }); }
+}
 
-  /* ---------- detail: edit ---------- */
+/* ---------- detail: edit ---------- */
   function opts(list, val) {
     return `<option value="">—</option>` + list.map(o => `<option ${o === val ? "selected" : ""}>${esc(o)}</option>`).join("");
   }
@@ -1850,13 +1980,30 @@ function mountSheet(r) {
 
   $("#floors").addEventListener("click", e => { const b = e.target.closest(".floor"); if (b) goFloor(b.dataset.floor, true); });
 
-  $("#search").addEventListener("input", e => { S.q = e.target.value; renderRoster(); ftSearch(); });
+  $("#search").addEventListener("input", e => { S.q = e.target.value; ftSearch(); renderRoster(); });
+/* FLOOR-SEARCH v1: the floor's own search bar */
+function fbSet(t) {
+  const k = t.dataset && t.dataset.fb; if (!k) return;
+  const s = FS[S.floor];
+  if (k.slice(0, 2) === "f:") s.f[k.slice(2)] = t.value; else s[k] = t.value;
+  if (k === "scope" || k === "mode") ftSearch();
+  renderRoster();
+}
+$("#findbar").addEventListener("change", e => fbSet(e.target));
+$("#findbar").addEventListener("input", e => { if (e.target.type === "number") fbSet(e.target); });
+$("#findbar").addEventListener("click", e => {
+  if (!e.target.closest("[data-fb-clear]")) return;
+  const s = FS[S.floor]; s.f = {}; s.from = ""; s.to = "";
+  S.q = ""; $("#search").value = ""; ftSearch(); renderFind(); renderRoster();
+  const f = cur(), r = S.data[f.key].find(x => x.id === S.sel[f.key]);
+  if (r && r._tl && !S.editing) (isSheet(f, r) ? mountSheet(r) : loadText(f, r));
+});
   $("#new-btn").addEventListener("click", () => { if (S.editing && S.dirty) { toast("Save or cancel your changes first.", true); return; } startEdit(null); });
 
   $("#roster").addEventListener("click", e => {
     const b = e.target.closest("[data-id]"); if (!b) return;
     if (S.editing && S.dirty) { toast("Save or cancel your changes first.", true); return; }
-    S.editing = null; S.sel[S.floor] = b.dataset.id; S.view = "detail";
+    S.editing = null; S.sel[S.floor] = b.dataset.id; S.view = "detail"; S.jump = b.dataset.at ? { id: b.dataset.id, at: +b.dataset.at } : null;
     renderRoster(); renderDetail(); syncView();
     if (mobileMQ.matches) $("#detail").querySelector(".back")?.focus();
   });

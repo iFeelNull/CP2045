@@ -4,6 +4,7 @@
 import type { CollectionConfig } from 'payload'
 import { ownerField, ownerOnly, signedIn, stampOwner } from './datafortAccess'
 import { snapshotSheet } from './SheetHistory'
+import { entriesSearch } from './entriesSearch'
 
 export const Entries: CollectionConfig = {
   slug: 'entries',
@@ -15,6 +16,8 @@ export const Entries: CollectionConfig = {
   },
   access: { read: ownerOnly, create: signedIn, update: ownerOnly, delete: ownerOnly },
   hooks: { beforeChange: [stampOwner], afterChange: [snapshotSheet] },
+  // FLOOR-SEARCH v1: GET /api/entries/search?floor=&q=&mode=all|phrase
+  endpoints: [{ path: '/search', method: 'get', handler: entriesSearch }],
   fields: [
     {
       name: 'floor',

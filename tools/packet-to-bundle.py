@@ -21,7 +21,7 @@ Never filed: gm-arc-* (sealed, GM-only), engine/, scripts/, proof files, name po
 the close prompt, the engine config.
 Stdlib only.
 """
-import json, pathlib, re, shutil, sys, unicodedata
+import json, os, pathlib, re, shutil, sys, unicodedata
 
 SEALED = re.compile(r"^gm-arc-")
 SKIP = {"cp-ref-manifest.md", "cp-day-close-prompt.md", "cp-engine-campaign.json",
@@ -87,6 +87,16 @@ def main():
         shutil.copyfile(src, dst)
         item["text"] = f"text/{src.name}"
         return item
+
+    # FLOOR-SEARCH v1: the text of a .md/.txt source (Sourcebooks, DLCs), if a copy is on this machine
+    src_dirs = [pathlib.Path(d).expanduser() for d in os.environ.get('DATAFORT_SOURCES', '~/Downloads/sources').split(':') if d]
+    def add_src(fn, item):
+        if fn.lower().endswith(('.md', '.txt')):
+            for d in src_dirs:
+                hits = sorted(d.rglob(fn)) if d.is_dir() else []
+                if hits:
+                    return items.append(with_text(hits[0], item))
+        items.append(item)
 
     manifest = (pk / "cp-ref-manifest.md").read_text(encoding="utf-8") if (pk / "cp-ref-manifest.md").is_file() else ""
     mlines = manifest.splitlines()
@@ -243,10 +253,10 @@ def main():
         fmt = "PDF" if fn.lower().endswith(".pdf") else "Text"
         note = f"{what}\nWhere: {where} · file {fn}"
         if kind == "sourcebooks":
-            items.append({"floor": "sourcebooks", "data": {"title": title, "system": "RED", "publisher": "R. Talsorian Games" if "RTG" in fn or "Corebook" in fn or "night-city" in fn.lower() or "NightCity" in fn else "",
+            add_src(fn, {"floor": "sourcebooks", "data": {"title": title, "system": "RED", "publisher": "R. Talsorian Games" if "RTG" in fn or "Corebook" in fn or "night-city" in fn.lower() or "NightCity" in fn else "",
                                                            "format": fmt, "status": "Owned", "notes": note}})
         else:
-            items.append({"floor": "dlc", "data": {"title": title, "type": kind.split(":")[1], "status": "Active", "system": "RED",
+            add_src(fn, {"floor": "dlc", "data": {"title": title, "type": kind.split(":")[1], "status": "Active", "system": "RED",
                                                    "appliesTo": "Cyberpunk RED 2045 campaign", "notes": note}})
 
     # ---------------------------------------------------------------- campaign header
