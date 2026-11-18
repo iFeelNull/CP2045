@@ -316,7 +316,7 @@ const CAT_COLOR = {
   'Payroll':'#6f9c37','Facilities & property':'#9d3d8d','Capital & investment':'#12a7a7','Services & logistics':'#b74d00',
   'Other':'#7d6a63','Intra-group':'#5b4a44'
 };
-const BOOKS = [['corporate','Corporate'],['reserve','Aster Vale reserve'],['personal','Hakk personal']];
+const BOOKS = [['corporate','Corporate'],['reserve','Aster Vale reserve'],['personal','Hakk personal']].filter(([b]) => D.entities.some(e => e.book === b));
 const FLOWS = [['operating','Operating'],['capital','Capital'],['intra','Intra-group']];
 const STATUSES = [['posted','Posted'],['pending','Pending']];
 const LEDGERS = [...new Set(D.lines.map(l => l.ledger))].sort((a,b) => a === 'Main' ? -1 : b === 'Main' ? 1 : a.localeCompare(b));
@@ -721,7 +721,7 @@ function renderChips(L){
   const out = [];
   const hidden = FLOWS.filter(([f]) => !S.flows.has(f)).map(([, n]) => n);
   if (S.page === 'positions') out.push(`<span class="chip">Positions follow <b>Book</b> &amp; <b>Entity</b> only — day, status &amp; flow slicers don't apply</span>`);
-  else if (hidden.length) out.push(`<span class="chip"><b>${esc(hidden.join(' & '))}</b> flows hidden — the CR-03 capital and transfers between our own entities dwarf trading <button data-act="allflows">Show all flows</button></span>`);
+  else if (hidden.length) out.push(`<span class="chip"><b>${esc(hidden.join(' & '))}</b> flows hidden — capex purchases and the nightly opex sweeps dwarf day-to-day spending <button data-act="allflows">Show all flows</button></span>`);
   const books = BOOKS.filter(([b]) => S.books.has(b)).map(([, n]) => n);
   out.push(`<span class="chip">Book: <b>${esc(books.join(', ') || 'none')}</b></span>`);
   if (S.offEntities.size) out.push(`<span class="chip"><b>${S.offEntities.size}</b> entities off <button data-act="allents">Clear</button></span>`);
@@ -791,7 +791,7 @@ function renderSlicers(){
     <fieldset class="slicer"><legend>Status</legend><div class="seg">${STATUSES.map(([v, n]) => opt('checkbox', 'status', v, n, S.status.has(v))).join('')}</div>
       <p class="hint">Pending lines post ${esc([...new Set(D.lines.filter(l => l.posts).map(l => l.posts))].join(', '))}.</p></fieldset>
     <fieldset class="slicer"><legend>Flow type</legend><div class="seg">${FLOWS.map(([v, n]) => opt('checkbox', 'flow', v, n, S.flows.has(v))).join('')}</div>
-      <p class="hint">Capital: CR-03, paying agents, sweeps, acquisitions. Intra-group: moves between our own entities.</p></fieldset>
+      <p class="hint">Capital: capex-tagged purchases and property. Intra-group: the nightly opex sweeps into SI Main.</p></fieldset>
     <fieldset class="slicer"><legend>Ledger</legend><div class="seg">${LEDGERS.map(v => opt('checkbox', 'ledger', v, esc(v), S.ledgers.has(v))).join('')}</div></fieldset>
     <p class="hint" style="margin-top:18px">${esc(D.source)} · ${D.lines.length} movement lines</p>`;
 }

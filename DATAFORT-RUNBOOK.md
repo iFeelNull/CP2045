@@ -2,7 +2,7 @@
 
 How to file each Cyberpunk RED 2045 play day (entries, canon and files) into the NXROOT Datafort on hades, and how to change the site safely. Written for Claude. Follow it as written; when something here conflicts with what you find on the machine, stop and tell the owner instead of improvising.
 
-Version 1.2 · 2026-11-18 · lives in the repo as `~/projects/payload/DATAFORT-RUNBOOK.md` and in the claude.ai Project.
+Version 1.3 · 2026-11-18 · lives in the repo as `~/projects/payload/DATAFORT-RUNBOOK.md` and in the claude.ai Project.
 
 ---
 
@@ -18,8 +18,9 @@ Version 1.2 · 2026-11-18 · lives in the repo as `~/projects/payload/DATAFORT-R
 | Start/stop | `systemctl --user start\|stop\|restart webstack-payload.service` |
 | Entries | Postgres table `entries` (floor + JSON `data`) — **not in git** |
 | Images / PDFs | `~/projects/payload/media/datafort-images`, `media/datafort-files` — **not in git** |
-| Ledger | `~/projects/payload/public/data/ledger.json` (in git); workbooks `*.xlsx` are git-ignored |
-| Tools | `~/projects/payload/tools/`: `packet-to-bundle.py` (packet → bundle), `datafort-sync.py` (bundle → Datafort), `add_canon_floor.py` + `add_fulltext.py` (site patches), `parse_ledger.py` (finance) |
+| Ledger | `~/projects/payload/public/data/ledger.json` (in git), built from each packet's `cp-ref-bank-balances.md`; the old Day-111 workbook ledger is archived as `public/data/ledger-xlsx-day111.json` |
+| Filing log | `~/datafort-days/FILING-LOG.md` on hades and `claude/datafort-filing-log.md` in the Project: one row per packet filed |
+| Tools | `~/projects/payload/tools/`: `packet-to-bundle.py` (packet → bundle), `datafort-sync.py` (bundle → Datafort), `add_canon_floor.py` + `add_fulltext.py` + `add_bank_finance.py` (site patches), `bank-to-ledger.py` (bank sheet → finance dashboard); `parse_ledger.py` is retired (no more workbooks) |
 | Backups | `~/backups/` (mode 700): `payload-db-*.dump` (pg_dump -Fc), `payload-pre-*.tar.gz` |
 | Logs | `~/system-logs/` |
 | Host / user | hades, RHEL 10.2, SELinux Enforcing, user `cerberus` |
@@ -134,19 +135,27 @@ It takes `~/backups/payload-db-pre-sync-day*.dump` first. The first full import 
 
 **Extras the packet doesn't carry** (handout PDFs, portraits, a canon fact the owner wants as its own entry): build a small bundle by hand (§7) in Claude's workspace, send it, and sync it the same way. Never put sealed `gm-arc` content in it.
 
-### 4.4 Ledger (only if a workbook came with the day)
+### 4.4 Finance dashboard (every game day, from the same packet)
 
-The owner downloads the `.xlsx`; then:
+There is no `.xlsx` any more: the bank balances come in the packet as `cp-ref-bank-balances.md`. The model it records: every company keeps an **opex account**; at 00:00 every night everything outside the opex float is **swept into SI Main**. So SI TOTAL = SI Main + all opex accounts, and SI Main(day N) = SI Main(N−1) + the sweep listed under day N + day N's SI Main debits. `bank-to-ledger.py` checks both identities for every day and refuses to write if either fails.
 
 ```bash
-clear; cd ~/projects/payload && cp ~/Downloads/Slipstream-Accounts-DayX.xlsx . && python3 tools/parse_ledger.py "Slipstream-Accounts-DayX.xlsx" public/data/ledger.json; echo "exit $?"; ls -Z public/data/ledger.json | cut -c1-80; cd ~
+clear; python3 ~/projects/payload/tools/bank-to-ledger.py ~/datafort-days/$X/packet --packet $X
 ```
 
-Exit 2 = a reconciliation mismatch: report the entity it names and stop; don't edit the workbook. The label must read `container_file_t:s0:c…`; if not, `chcon --reference=. public/data/ledger.json`. If `openpyxl` is missing: `pip install --user -r tools/requirements.txt` (the owner may need to approve).
+Dry run: prints the days in the sheet, how many days the ledger now holds (history accumulates; each packet's sheet only covers the last few days, and days already stored are kept), the line count and `checks N, failing 0`. Then:
+
+```bash
+clear; python3 ~/projects/payload/tools/bank-to-ledger.py ~/datafort-days/$X/packet --packet $X --apply; ls -Z ~/projects/payload/public/data/ledger.json | cut -c1-70
+```
+
+It backs up the old file to `~/backups/ledger-pre-day*.json`, relabels the new one (must read `container_file_t:s0:c369,c692`) and swaps it in. `[OK] no change` on a re-run is normal. **Any `[FAIL]` line = the sheet doesn't reconcile:** report the day and the difference it prints to the owner and stop; never edit the sheet or the ledger by hand. The Datafort still gets the sheet itself (Reference sheets → Bank balances) through §4.3.
+
+How lines are built: each SI Main debit is one outflow line (category by keyword; `capex` in the memo → Capital flow); each nightly sweep is an Intra-group inflow to SI Main; each day-over-day change in an opex balance is one line on that company (the sheet has no detail behind it). Positions are the latest day's balances. New companies in a later sheet get an account automatically; add them to `KNOWN` in the tool for a nicer code.
 
 ### 4.5 Verify
 
-- Browser: http://localhost:8087/ → Canon floor → search for a new title and one body phrase; open one entry and its PDF. `/finance` shows the new day if the ledger changed.
+- Browser: http://localhost:8087/ → Canon floor → search for a new title and one body phrase; open one entry and its PDF. `/finance` shows the new day in the rail (D-number) and `N checks · all reconcile` under the ledger table.
 - Terminal: `clear; podman logs --since 10m ws-payload-web 2>&1 | grep -iE 'error|EACCES' | tail -5` → nothing.
 
 ### 4.6 Commit (code and ledger only; entries live in Postgres)
@@ -157,9 +166,15 @@ clear; cd ~/projects/payload && git status --short | head -20 && git add -A && g
 
 Skip if `git status` is empty. If the push asks for the key passphrase, the owner types it.
 
-### 4.7 Report
+### 4.7 Log the day and report
 
-Tell the owner: items created/updated/same, the backup file, ledger result, anything skipped and why. Keep the bundle zip; the owner files it with the day's packet in Drive.
+Append the packet's row to the filing log on hades and in the Project (§0):
+
+```bash
+clear; echo "| $X | $((X-1)) | $(date '+%F %H:%M') | <canon> | <npc> | <pc> | <sheets> | <sourcebooks> | <dlc> | <created/updated/same; finance Day N> | <backup file> |" >> ~/datafort-days/FILING-LOG.md; tail -3 ~/datafort-days/FILING-LOG.md
+```
+
+Then `project_read` → add the same row → `project_write` `claude/datafort-filing-log.md`. Tell the owner: items created/updated/same, the backup file, finance result, anything skipped and why. Keep the bundle zip; the owner files it with the day's packet in Drive.
 
 ## 5. Recover
 
@@ -290,4 +305,6 @@ Plus: `Users.ts` gets `useAPIKey: true` (for §3.3), the ticker's floor count fo
 | Cockpit shows Disconnected / login | Idle timeout → owner logs in again |
 | Search feels slow (~1 s) | Normal: Postgres scans ~50 MB of text per query. A `pg_trgm` index is the fix if it grows a lot (§6.1 rules apply) |
 | Opening an entry shows "Full text · loading…" forever | Stack down or entry deleted → reload; check `podman logs --tail 20 ws-payload-web` |
-| `parse_ledger.py` exit 2 | Reconciliation mismatch in the workbook → report the entity, stop |
+| `bank-to-ledger.py` `[FAIL] Day N: SI Main … ≠ …` | The close's bank sheet doesn't roll (a missing/duplicated debit or sweep) → report the day and the difference, stop |
+| `bank-to-ledger.py` "no SI TOTAL / SI Main row" | The sheet's layout changed → show the owner the block, adapt `parse()` (§6.1 rules) |
+| `/finance` shows old numbers | Browser cache → reload; check `ls -Z public/data/ledger.json` label |
