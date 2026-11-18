@@ -33,7 +33,7 @@ Data model, one row per entry: `{ floor, data, owner }`. `floor` is one of `pc n
 1. **This site never leaves the laptop.** No hosting, deploy, domain, tunnel or cloud storage. Only the code goes to the private GitHub repo.
 2. **Never type a password, passphrase or API key**, in a terminal or a form. The owner types them. Never print the API key (`cat` it, `echo` it, put it in a URL).
 3. **Back up before writing.** `datafort-sync.py --apply` takes a `pg_dump` by itself; for anything else run the backup in §6.1 first.
-4. **Dry run first.** Show the owner the plan; apply only after they agree.
+4. **Dry run first, then go ahead.** Owner's standing instruction (2026-11-17): Claude runs the routine steps itself without asking - dry run, apply, install a package the owner downloaded, commit, push. Still stop and ask on any `[FAIL]`, an unexpected UPDATE/DELETE count, anything irreversible outside the backups, or a change to the stack.
 5. **Canon is only what the day's close made canon.** File it from the close documents; never invent, embellish or "fill in". Uncertain → `status: "Rumor"` and say so. GM-only material goes in an NPC's `secrets` field, never in canon `body`.
 6. **SELinux:** files copied into `~/projects/payload` from elsewhere arrive with the wrong label and the container gets `EACCES` (HTTP 500). Never `cp -a` or `mv` into the project; after copying, run `chcon -R --reference=$HOME/projects/payload <paths>`.
 7. **Customer separation:** lcfrw is a paid customer site. Never touch `~/projects/lcfrw`, `webstack-lcfrw`, its token or its Render service from this runbook.
@@ -126,7 +126,7 @@ If it stops with "two bundle items share …" or "canon-index names …", the pa
 clear; python3 ~/projects/payload/tools/datafort-sync.py ~/datafort-days/$X/bundle
 ```
 
-Prints per-floor counts (`CREATE` / `UPDATE` / `SAME`) and up to 40 changed items (`--verbose` for all). A normal game day: a few `CREATE canon:Day …`, `UPDATE` on the live board, boards, bank balances, canon-index and the NPCs who moved. Show the owner; on their go:
+Prints per-floor counts (`CREATE` / `UPDATE` / `SAME`) and up to 40 changed items (`--verbose` for all). A normal game day: a few `CREATE canon:Day …`, `UPDATE` on the live board, boards, bank balances, canon-index and the NPCs who moved. If it looks like a normal day, apply (rule 4):
 
 ```bash
 clear; python3 ~/projects/payload/tools/datafort-sync.py ~/datafort-days/$X/bundle --apply 2>&1 | tee ~/system-logs/datafort-day-$X-$(date +%H%M).log | tail -12
@@ -169,7 +169,7 @@ How lines are built: each SI Main debit is one outflow line (category by keyword
 clear; cd ~/projects/payload && git status --short | head -20 && git add -A && git commit -q -m "Day X close: ledger + site changes" && git push 2>&1 | tail -3; cd ~
 ```
 
-Skip if `git status` is empty. If the push asks for the key passphrase, the owner types it.
+Skip if `git status` is empty. The GitHub key has no passphrase (owner's choice, 2026-11-17), so the push runs unattended; use `timeout 60 git -c core.sshCommand='ssh -o BatchMode=yes' push origin main` so it fails fast instead of hanging if that ever changes. Never leave a command waiting at a prompt: the next line typed goes into it.
 
 ### 4.7 Log the day and report
 
