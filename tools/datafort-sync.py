@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-datafort-sync.py v1.0 -- file a play day's entries, canon and files into the local Datafort.
+datafort-sync.py v1.1 -- file a play day's entries, canon and files into the local Datafort.
 
     python3 tools/datafort-sync.py BUNDLE_DIR            # dry run: prints the plan, changes nothing
     python3 tools/datafort-sync.py BUNDLE_DIR --apply    # pg_dump backup, then create/update/upload
@@ -23,6 +23,9 @@ BUNDLE_DIR/bundle.json:
   mode    "merge" (default: only the given fields change) or "replace" (data is exactly what's given)
   files   field -> path inside BUNDLE_DIR. Image fields (portrait, image, cover) go to
           datafort-images (PNG/JPEG/GIF/WebP <= 10 MB); "file" goes to datafort-files (PDF/EPUB).
+  text    path inside BUNDLE_DIR to a UTF-8 text file (a day file, a full sheet): stored in the
+          entry's server-side full text (needs tools/add_fulltext.py), shown on demand, searchable.
+          Skipped when unchanged (sha256 kept in data.textSrc).
 
 Auth: Payload API key of the Datafort's owner, read from ~/.config/datafort/api-key (mode 600)
 or $DATAFORT_API_KEY. Sent as "Authorization: users API-Key <key>". Never printed.
@@ -105,6 +108,7 @@ def main():
     ap.add_argument("--base", default=os.environ.get("DATAFORT_BASE", "http://localhost:8087"))
     ap.add_argument("--key-file", default=os.path.expanduser("~/.config/datafort/api-key"))
     ap.add_argument("--no-backup", action="store_true", help="skip the pg_dump before --apply")
+    ap.add_argument("--verbose", action="store_true", help="list every item in the plan")
     a = ap.parse_args()
 
     root = pathlib.Path(a.bundle)
@@ -145,6 +149,12 @@ def main():
                 die(f"entry {i}: file not found: {p}")
             if field in IMAGE_FIELDS and p.stat().st_size > 10 * 1024 * 1024:
                 die(f"entry {i}: image over 10 MB: {p}")
+        if it.get("text"):
+            p = root / it["text"]
+            if not p.is_file():
+                die(f"entry {i}: text file not found: {p}")
+            if len(p.read_text(encoding="utf-8")) > 5_000_000:
+                die(f"entry {i}: text over 5,000,000 characters: {p}")
 
     # ---- current state (owner-only: the key's user sees exactly their Datafort)
     try:
@@ -153,7 +163,7 @@ def main():
         die(str(e))
     if not me:
         die("the API key was not accepted (re-check ~/.config/datafort/api-key, and 'Enable API Key' on the user)")
-    docs = api.call("GET", "/api/entries?pagination=false&depth=0")["docs"]
+    docs = api.call("GET", "/api/entries?pagination=false&depth=0&select[text]=false")["docs"]
     print(f"Datafort at {a.base} as {me.get('email')}: {len(docs)} entries on file. Bundle: day {bundle.get('day', '?')}, {len(items)} items.")
 
     # ---- plan
@@ -169,11 +179,12 @@ def main():
         # upload only files whose content differs from what the entry already holds (<field>Src = sha256)
         it["_up"] = {f: rel for f, rel in (it.get("files") or {}).items()
                      if not cur or cur["data"].get(f + "Src") != sha(root / rel) or not cur["data"].get(f)}
+        it["_text"] = bool(it.get("text")) and (not cur or cur["data"].get("textSrc") != sha(root / it["text"]))
         if cur:
             base = dict(cur["data"]) if mode == "merge" else {k: cur["data"][k] for k in ("seq", "createdAt") if k in cur["data"]}
             new = {**base, **it["data"]}
             changed = sorted(k for k in set(new) | set(cur["data"]) if new.get(k) != cur["data"].get(k) and k != "updatedAt")
-            action = "UPDATE" if changed or it["_up"] else "SAME"
+            action = "UPDATE" if changed or it["_up"] or it["_text"] else "SAME"
             plan.append((action, label, it, cur, new, changed))
         else:
             seq = max([d["data"].get("seq") or 0 for d in docs if d["floor"] == fl] + [0]) + 1
@@ -183,9 +194,22 @@ def main():
             plan.append(("CREATE", label, it, None, new, sorted(new)))
             if fl != "meta":
                 docs.append({"floor": fl, "data": {"seq": seq}})   # so two creates on one floor get distinct seq
+    counts = {}
     for action, label, it, cur, new, changed in plan:
+        counts.setdefault(it["floor"], {}).setdefault(action, 0)
+        counts[it["floor"]][action] += 1
+    for fl, c in counts.items():
+        print(f"  {fl:12} " + "  ".join(f"{a} {n}" for a, n in sorted(c.items())))
+    shown = 0
+    for action, label, it, cur, new, changed in plan:
+        if action == "SAME" and not a.verbose:
+            continue
+        if shown >= 40 and not a.verbose:
+            print(f"  ... {sum(1 for p in plan if p[0] != 'SAME') - shown} more (use --verbose)"); break
         files = ", ".join(f"{k}<-{v}" for k, v in it["_up"].items())
-        print(f"  {action:6} {label}" + (f"  fields: {', '.join(changed)}" if changed and action == "UPDATE" else "") + (f"  files: {files}" if files else ""))
+        print(f"  {action:6} {label}" + (f"  fields: {', '.join(changed[:8])}{' …' if len(changed) > 8 else ''}" if changed and action == "UPDATE" else "")
+              + (f"  files: {files}" if files else "") + ("  text" if it["_text"] else ""))
+        shown += 1
     if not a.apply:
         print("\nDry run. Nothing changed. Re-run with --apply to file it."); return
 
@@ -217,14 +241,19 @@ def main():
                 new[field + "Name"], new[field + "Size"] = doc["filename"], doc.get("filesize") or p.stat().st_size
         if it["floor"] != "meta":
             new["updatedAt"] = NOW_MS
+        body = {"data": new}
+        if it["_text"]:
+            tp = root / it["text"]
+            body["text"], new["textSrc"] = tp.read_text(encoding="utf-8"), sha(tp)
         if cur:
-            api.call("PATCH", f"/api/entries/{cur['id']}?depth=0", {"data": new})
+            api.call("PATCH", f"/api/entries/{cur['id']}?depth=0&select[text]=false", body)
         else:
-            api.call("POST", "/api/entries?depth=0", {"floor": it["floor"], "data": new})
+            api.call("POST", "/api/entries?depth=0&select[text]=false", {"floor": it["floor"], **body})
         for ref in replaced:
             api.drop_ref(ref)
         done += 1
-        print(f"[OK] {action.lower()}d {label}")
+        if a.verbose or done % 50 == 0 or done == sum(1 for p in plan if p[0] != "SAME"):
+            print(f"[OK] {done} filed (last: {action.lower()}d {label})")
     print(f"\nFiled {done} item(s). Reload http://localhost:8087/ to see them.")
 
 

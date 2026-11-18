@@ -189,6 +189,11 @@ export interface Entry {
     | boolean
     | null;
   summary?: string | null;
+  /**
+   * Full text (large). Loaded on demand by the Datafort page.
+   */
+  text?: string | null;
+  textLength?: number | null;
   owner: number | User;
   updatedAt: string;
   createdAt: string;
@@ -370,6 +375,8 @@ export interface EntriesSelect<T extends boolean = true> {
   floor?: T;
   data?: T;
   summary?: T;
+  text?: T;
+  textLength?: T;
   owner?: T;
   updatedAt?: T;
   createdAt?: T;

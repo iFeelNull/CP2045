@@ -2,7 +2,7 @@
 
 How to file each Cyberpunk RED 2045 play day (entries, canon and files) into the NXROOT Datafort on hades, and how to change the site safely. Written for Claude. Follow it as written; when something here conflicts with what you find on the machine, stop and tell the owner instead of improvising.
 
-Version 1.1 · 2026-11-17 · lives in the repo as `~/projects/payload/DATAFORT-RUNBOOK.md` and in the claude.ai Project.
+Version 1.2 · 2026-11-18 · lives in the repo as `~/projects/payload/DATAFORT-RUNBOOK.md` and in the claude.ai Project.
 
 ---
 
@@ -10,7 +10,7 @@ Version 1.1 · 2026-11-17 · lives in the repo as `~/projects/payload/DATAFORT-R
 
 | What | Where |
 |---|---|
-| Datafort (5 floors + Canon) | http://localhost:8087/ |
+| Datafort (5 floors + Canon, full-text search) | http://localhost:8087/ |
 | Finance dashboard | http://localhost:8087/finance |
 | Payload admin | http://localhost:8087/admin (always `localhost`, not `127.0.0.1`) |
 | Project (source of truth, git) | `~/projects/payload` → `git@github-iFeelNull:iFeelNull/CP2045.git` (private) |
@@ -19,7 +19,7 @@ Version 1.1 · 2026-11-17 · lives in the repo as `~/projects/payload/DATAFORT-R
 | Entries | Postgres table `entries` (floor + JSON `data`) — **not in git** |
 | Images / PDFs | `~/projects/payload/media/datafort-images`, `media/datafort-files` — **not in git** |
 | Ledger | `~/projects/payload/public/data/ledger.json` (in git); workbooks `*.xlsx` are git-ignored |
-| Tools | `~/projects/payload/tools/datafort-sync.py`, `add_canon_floor.py`, `parse_ledger.py` |
+| Tools | `~/projects/payload/tools/`: `packet-to-bundle.py` (packet → bundle), `datafort-sync.py` (bundle → Datafort), `add_canon_floor.py` + `add_fulltext.py` (site patches), `parse_ledger.py` (finance) |
 | Backups | `~/backups/` (mode 700): `payload-db-*.dump` (pg_dump -Fc), `payload-pre-*.tar.gz` |
 | Logs | `~/system-logs/` |
 | Host / user | hades, RHEL 10.2, SELinux Enforcing, user `cerberus` |
@@ -65,20 +65,20 @@ clear; rm -rf ~/Downloads/datafort-theme && mkdir ~/Downloads/datafort-theme && 
 
 It backs up, copies the overlay (incl. `tools/` and this runbook), fixes SELinux labels, restarts and verifies. Re-installing replaces `public/index.html` and `Users.ts`, so **always run 3.2 again after any re-install**.
 
-### 3.2 Canon floor + API keys (searchable canon)
+### 3.2 Canon floor, full text, API keys
 
 ```bash
-clear; cd ~/projects/payload && python3 tools/add_canon_floor.py . && chcon -R --reference=. public src/collections && systemctl --user restart webstack-payload.service; cd ~
+clear; cd ~/projects/payload && python3 tools/add_canon_floor.py . && python3 tools/add_fulltext.py . && chcon -R --reference=. public src/collections && systemctl --user restart webstack-payload.service; cd ~
 ```
 
-Idempotent: prints `skip` for anything already there. The restart is needed because `Users.ts` (API keys) and the `floor` options changed; Payload's dev schema push adds the `canon` value and the API-key columns by itself (non-destructive). Wait ~1 minute, then check `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8087/admin` → `200`.
+Both scripts are idempotent (`skip` for anything already there) and must run in this order. `add_canon_floor.py` adds the Canon floor and API keys; `add_fulltext.py` adds the server-side full text (`Entries.text`, up to 5,000,000 characters, kept out of list loads, fetched when an entry is opened, searched in Postgres), makes form saves merge instead of replace, and adds the packet categories (Campaign state, Architecture, Vehicle, Arc, Board, Master list, Financial…; canon kind "Day log"). Payload's dev push adds the columns on restart (non-destructive). Wait ~1 minute: `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8087/admin` → `200`.
 
 ### 3.3 API key for scripted uploads (owner does the secret parts)
 
 1. **Owner:** http://localhost:8087/admin → Users → their account → tick **Enable API Key** → copy the key → **Save**.
-2. **Owner, in the terminal** (Claude may type the first line, the owner pastes the key and presses Enter, then Ctrl-D):
+2. **Owner, in the terminal.** Claude may type this line; it prompts silently, the owner pastes the key and presses Enter. Nothing is echoed, so the key never appears on screen or in a screenshot. (Never use `cat >` for this: it echoes the paste.) The owner must never paste the key into chat; if that happens, untick/re-tick **Enable API Key** + Save to replace it, then repeat this step.
    ```bash
-   install -d -m 700 ~/.config/datafort && ( umask 077; cat > ~/.config/datafort/api-key )
+   install -d -m 700 ~/.config/datafort && ( umask 077; read -rsp 'Paste API key (hidden), then Enter: ' k && printf '%s' "$k" > ~/.config/datafort/api-key; unset k; echo; stat -c 'saved perm=%a size=%s' ~/.config/datafort/api-key )
    ```
 3. **Claude** checks without revealing it:
    ```bash
@@ -92,50 +92,47 @@ Idempotent: prints `skip` for anything already there. The restart is needed beca
 
 ## 4. Every game day
 
-Run this **after** the day is closed with the `cp-close-day` skill (the close produces the canon). The day is X.
+Run this **after** the day is closed with `cp-close-day` and the packet for the next day exists (`<X>.zip`, X = the day it opens; it holds `cp-campaign-state-day-[X−1].md` and every `canon/day-*.md` up to X−1). The whole packet is filed every time; `datafort-sync.py` matches each entry and only writes what changed, so a game day typically creates the new day's canon parts and updates the state, the boards and the NPCs that moved.
 
-### 4.1 Gather the inputs (in Claude's workspace)
+### 4.1 Get the packet onto hades
 
-From the closed packet and close outputs, read:
+The owner downloads `<X>.zip` (Drive `zips/`, or the zip attached in chat) in Chrome on hades → `~/Downloads/<X>.zip`. Check: `clear; ls -l ~/Downloads/<X>.zip`.
 
-- `cp-day-X-complete.md` (the day file, every part) and `cp-day-X-close.md`
-- the canon index changes made at this close (`canon-index` in the packet)
-- master-list rows for NPCs who appeared or changed; PC sheet changes (HP, Humanity, eddies, REP, IP, gear, status)
-- handouts/PDFs the day produced; portraits if the owner supplied any
-- the Slipstream accounts workbook for the day, if the owner attached one
+### 4.2 Build the bundle from the packet (on hades)
 
-If any of these is missing, ask for it; don't reconstruct it.
+```bash
+clear; X=121; D=~/datafort-days/$X; rm -rf $D && mkdir -p $D/packet && unzip -q ~/Downloads/$X.zip -d $D/packet && python3 ~/projects/payload/tools/packet-to-bundle.py $D/packet $D/bundle
+```
 
-### 4.2 Build the bundle
+`packet-to-bundle.py` maps the packet (it prints the counts and the sealed files it skipped):
 
-Create `datafort-day-X/` with `bundle.json` and the files it references (relative paths). Schema in §7. Mapping:
-
-| Source | Datafort entry |
+| Packet | Datafort |
 |---|---|
-| Each new or changed canon item | `floor: "canon"`: `title` (short, specific), `kind` (Event/Person/Place/Faction/Item/Ruling/Lore/Thread), `status` (Canon/Rumor/Retconned), `day: "X"`, `when` (in-game date), `tags` (comma list: names, factions, places), `summary` (1–2 sentences), `body` (the canon text as the close states it), `source` (`cp-day-X-complete.md §N`) |
-| A canon item retconned today | same entry (same `title`), `status: "Retconned"`, body says what replaced it |
-| The day file | `floor: "sheets"`: `title: "Day X — <day title>"`, `category: "Session log"`, `system: "RED"`, `body` = the day file text; attach a PDF via `files.file` if one exists |
-| NPC appeared/changed | `floor: "npc"`, match `handle`, **merge**: only the changed fields (`disposition`, `status`, `location`, `notes`…). New NPC: `handle`, `affiliation`, `role`, `threat`, `disposition`, `status`. GM-only → `secrets` |
-| PC changed | `floor: "pc"`, match `handle`, merge only changed fields (`hp`/`hpMax`, `hum`/`humMax`, `eddies`, `rep`, `ip`, `status`, `gear`…) |
-| Campaign header | `floor: "meta"`: `session: "X"` (plus `name`, `gm`, `system` only if they change) |
+| `canon/day-*.md` (via the canon-index FILE REGISTER) | Canon: "Day 120 · part 2", kind Day log, date, full text |
+| `cp-ref-npc-master-list.md` §A (NPCs in play) | NPCs: one per row (status, role, look, chrome, days, voice in Notes); `npc-<name>.md` becomes that NPC's full text |
+| `pc-*.md` | PCs: the sheet as full text |
+| `cp-ref-*`, `cp-arc-*`, `cp-homebrew-*`, the state, kickoff, `CHARACTER-SHEETS.md`, deck sheet, `canon-index.md` | Reference sheets: category by kind (Financial = bank balances, WSE, portfolio, dividends, Whitehat mechanics), manifest description, full text; matched on the file name (the state as "live board") |
+| manifest §4 source layer | Sourcebooks (rules/, world/) and DLCs (dlc/, homebrew/, errata) as catalogue rows; the files stay in Drive/Project |
+| campaign name, last closed day | campaign header |
+| **never**: `gm-arc-*` (sealed, GM-only), engine/, scripts/, proof files, name pools, manifest, close prompt, engine config | — |
 
-Rules: one canon entry per fact or event, not one per day; keep `title` stable (it's the match key — changing it creates a new entry); never put a value you can't point to in the close documents.
+If it stops with "two bundle items share …" or "canon-index names …", the packet has a problem: report it, don't edit the packet.
 
-Validate locally before sending: `python3 -c "import json;d=json.load(open('datafort-day-X/bundle.json'));print(len(d['entries']),'entries')"` and check every `files` path exists. Zip it: `zip -qr datafort-day-X.zip datafort-day-X`. Send with SendUserFile and ask the owner to download it on hades.
-
-### 4.3 File it on hades (Cockpit terminal)
-
-```bash
-clear; ls -l ~/Downloads/datafort-day-X.zip; rm -rf ~/datafort-days/day-X && mkdir -p ~/datafort-days/day-X && unzip -q ~/Downloads/datafort-day-X.zip -d ~/datafort-days/day-X && python3 ~/projects/payload/tools/datafort-sync.py ~/datafort-days/day-X/datafort-day-X
-```
-
-That is the **dry run**: it lists `CREATE` / `UPDATE (fields…)` / `SAME` per item and changes nothing. Show the owner the plan. On their go:
+### 4.3 Dry run, then apply
 
 ```bash
-clear; python3 ~/projects/payload/tools/datafort-sync.py ~/datafort-days/day-X/datafort-day-X --apply 2>&1 | tee ~/system-logs/datafort-day-X-$(date +%H%M).log | tail -25
+clear; python3 ~/projects/payload/tools/datafort-sync.py ~/datafort-days/$X/bundle
 ```
 
-It takes `~/backups/payload-db-pre-sync-dayX-*.dump` first and refuses to continue if the backup fails. Re-running is safe: unchanged items report `SAME`; a changed file replaces the old upload (the old one is deleted).
+Prints per-floor counts (`CREATE` / `UPDATE` / `SAME`) and up to 40 changed items (`--verbose` for all). A normal game day: a few `CREATE canon:Day …`, `UPDATE` on the live board, boards, bank balances, canon-index and the NPCs who moved. Show the owner; on their go:
+
+```bash
+clear; python3 ~/projects/payload/tools/datafort-sync.py ~/datafort-days/$X/bundle --apply 2>&1 | tee ~/system-logs/datafort-day-$X-$(date +%H%M).log | tail -12
+```
+
+It takes `~/backups/payload-db-pre-sync-day*.dump` first. The first full import (Days 1–120, 886 entries, ~51 MB of text) took ~15 s in testing. Re-running is safe.
+
+**Extras the packet doesn't carry** (handout PDFs, portraits, a canon fact the owner wants as its own entry): build a small bundle by hand (§7) in Claude's workspace, send it, and sync it the same way. Never put sealed `gm-arc` content in it.
 
 ### 4.4 Ledger (only if a workbook came with the day)
 
@@ -191,7 +188,8 @@ Tell the owner: items created/updated/same, the backup file, ledger result, anyt
 | A floor's fields, labels, search, list text | `public/index.html` → `const FLOORS = [...]` (one object per floor) |
 | How an entry reads in the detail pane | `public/index.html` → `const READ = { <floor>(f, r) {...} }` — **every floor needs one** |
 | Badge colours for status values | `public/index.html` → `const TONE` (`ok` / `warn` / `bad` / `dim`) |
-| Search | `matches()` searches primary field, sub-line, `name`, badge, code, plus the floor's optional `search: r => [...]` list |
+| Search | `matches()` searches primary field, sub-line, `name`, badge, code, the floor's optional `search: r => [...]` list, plus `FT` (server-side `where[text][like]` on floors with full text; Payload's like = every word, any order, case-insensitive) |
+| Full text (large) | `Entries.text` (≤ 5,000,000 chars) + `textLength`; page: `loadText()` / `markText()`; list loads use `select[text]=false` — never load text in lists |
 | Data access (save, load, uploads) | `public/index.html` → `const API` (Payload REST, same origin, cookie) |
 | Allowed `floor` values | `src/collections/Entries.ts` → `floor` options (must include every `FLOORS[].key` + `meta`) |
 | Who can see/change what | `src/collections/datafortAccess.ts` (owner-only) |
@@ -260,6 +258,7 @@ Plus: `Users.ts` gets `useAPIKey: true` (for §3.3), the ticker's floor count fo
 
 - `match` (optional): the field that identifies an existing entry; default `handle` for pc/npc, `title` otherwise; `meta` is a single entry.
 - `mode` (optional): `merge` (default, only the given fields change) or `replace`.
+- `text` (optional): path to a UTF-8 file stored as the entry's server-side full text (searchable, shown on demand); skipped when unchanged (`data.textSrc` = sha256).
 - `files`: `portrait` / `image` / `cover` → images (PNG/JPEG/GIF/WebP ≤ 10 MB); `file` → PDF/EPUB (≤ 100 MB; Payload rejects files that aren't real PDFs/EPUBs).
 - The tool adds `seq` and `createdAt` to new entries, `updatedAt` on changes, and `<field>Name`/`<field>Size`/`<field>Src` for files.
 
@@ -289,4 +288,6 @@ Plus: `Users.ts` gets `useAPIKey: true` (for §3.3), the ticker's floor count fo
 | `datafort-sync`: "matches N existing entries" | Duplicate titles/handles → merge or rename them in /admin first |
 | Datafort "Couldn't reach the Payload server" | Stack down → `systemctl --user status webstack-payload.service`, then `start` |
 | Cockpit shows Disconnected / login | Idle timeout → owner logs in again |
+| Search feels slow (~1 s) | Normal: Postgres scans ~50 MB of text per query. A `pg_trgm` index is the fix if it grows a lot (§6.1 rules apply) |
+| Opening an entry shows "Full text · loading…" forever | Stack down or entry deleted → reload; check `podman logs --tail 20 ws-payload-web` |
 | `parse_ledger.py` exit 2 | Reconciliation mismatch in the workbook → report the entity, stop |

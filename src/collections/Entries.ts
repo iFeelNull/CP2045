@@ -46,6 +46,26 @@ export const Entries: CollectionConfig = {
         ],
       },
     },
+    {
+      // Long markdown (day files, full sheets). Kept out of list loads (select[text]=false),
+      // fetched when an entry is opened, searched server-side with where[text][like].
+      name: 'text',
+      type: 'textarea',
+      maxLength: 5_000_000, // Payload's default cap is 40,000; day files run to ~330,000
+      admin: { description: 'Full text (large). Loaded on demand by the Datafort page.' },
+    },
+    {
+      name: 'textLength',
+      type: 'number',
+      admin: { readOnly: true, position: 'sidebar' },
+      hooks: {
+        beforeChange: [
+          // recompute when text is sent; otherwise keep the stored length (a data-only PATCH must not clear it)
+          ({ siblingData, originalDoc }) =>
+            typeof siblingData?.text === 'string' ? siblingData.text.length : (originalDoc?.textLength ?? null),
+        ],
+      },
+    },
     ownerField,
   ],
   timestamps: true,

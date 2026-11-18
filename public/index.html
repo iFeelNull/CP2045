@@ -684,6 +684,12 @@ select {
 .book-file .bf-n { flex: 1 1 200px; min-width: 0; font: 500 15px/1.3 var(--f-body); overflow-wrap: anywhere; }
 .book-file .bf-n small { display: block; margin-top: 2px; font: 400 12px/1.2 var(--f-mono); color: var(--dim); }
 @media (prefers-reduced-motion: reduce) { .file-bar i { animation: none; width: 100%; } }
+/* full text (server-side, on demand) */
+.d-text { margin-top: 28px; }
+.d-text .eyebrow { margin-bottom: 10px; }
+.fulltext { white-space: pre-wrap; word-break: break-word; margin: 0; padding: 14px 16px; font: 13px/1.55 var(--f-mono);
+  color: var(--fg); background: var(--field); border: 1px solid var(--line); }
+.fulltext mark { background: var(--accent-2); color: var(--on-accent); padding: 0 1px; }
 </style>
 </head>
 <body>
@@ -859,7 +865,7 @@ select {
       chips: r => [r.category, r.system && "Edition " + r.system],
       fields: [
         { k: "title", label: "Title", type: "text", req: true },
-        { k: "category", label: "Category", type: "select", opts: ["Rules", "Table", "Map", "Handout", "House rule", "Session log", "Other"] },
+        { k: "category", label: "Category", type: "select", opts: ["Rules", "Table", "Map", "Handout", "House rule", "Session log", "Campaign state", "Character sheet", "Architecture", "Vehicle", "Arc", "Board", "Master list", "Financial", "Reference", "Other"] },
         { k: "system", label: "Edition", type: "select", opts: SYSTEMS },
         { k: "link", label: "Source link", type: "url", ph: "https://" },
         { k: "file", label: "Attached file", type: "file" },
@@ -881,7 +887,7 @@ select {
         { k: "publisher", label: "Publisher", type: "text" },
         { k: "year", label: "Year", type: "text" },
         { k: "pages", label: "Pages", type: "text" },
-        { k: "format", label: "Format", type: "select", opts: ["Print", "PDF", "Print + PDF"] },
+        { k: "format", label: "Format", type: "select", opts: ["Print", "PDF", "Print + PDF", "Text"] },
         { k: "file", label: "Book file", type: "file" },
         { k: "status", label: "Status", type: "select", opts: ["Owned", "Wishlist", "Borrowed"] },
         { k: "link", label: "Link", type: "url", ph: "https://" },
@@ -917,7 +923,7 @@ select {
       search: r => [r.summary, r.body, r.tags, r.when, r.source, r.day && "day " + r.day],
       fields: [
         { k: "title", label: "Title", type: "text", req: true, ph: "Short, specific: 'Hakk buys the SI TEAB stake'" },
-        { k: "kind", label: "Kind", type: "select", opts: ["Event", "Person", "Place", "Faction", "Item", "Ruling", "Lore", "Thread"] },
+        { k: "kind", label: "Kind", type: "select", opts: ["Day log", "Event", "Person", "Place", "Faction", "Item", "Ruling", "Lore", "Thread"] },
         { k: "status", label: "Status", type: "select", opts: ["Canon", "Rumor", "Retconned"] },
         { k: "day", label: "Play day", type: "text", ph: "112" },
         { k: "when", label: "In-game date", type: "text", ph: "Mon Oct 16, 2045" },
@@ -1052,7 +1058,7 @@ select {
     },
     async loadAll() {
       let docs;
-      try { docs = (await this.http("GET", "/api/entries?pagination=false&depth=0&sort=createdAt")).docs || []; }
+      try { docs = (await this.http("GET", "/api/entries?pagination=false&depth=0&sort=createdAt&select[text]=false")).docs || []; }
       catch (e) {
         FLOORS.forEach(f => S.loaded[f.key] = true);
         if (e.status === 401 || e.status === 403) { this.lock(); return; }
@@ -1064,7 +1070,7 @@ select {
       for (const row of docs) {
         // Payload/Postgres ids are numbers; the page compares ids with the strings in data-id="…", so keep them as strings.
         if (row.floor === "meta") { this.metaId = String(row.id); meta = row.data || {}; continue; }
-        if (by[row.floor]) by[row.floor].push(Object.assign({}, row.data, { id: String(row.id) }));
+        if (by[row.floor]) by[row.floor].push(Object.assign({}, row.data, { id: String(row.id), _tl: row.textLength || 0 }));   // _tl: server-side text length
       }
       FLOORS.forEach(f => { S.data[f.key] = sorted(by[f.key]); });
       if (!S.campEdit) S.meta = meta;
@@ -1093,7 +1099,10 @@ select {
       catch (e) { throw { local: true, message: "This browser's storage is full. Remove an uploaded image or two, then try again." }; }
     },
     async save(key, id, body) {
-      const clean = Object.assign({}, body); delete clean.id;
+      // Merge into what is stored: the form only carries its own fields; imported keys must survive an edit.
+      const prev = id ? S.data[key].find(r => r.id === id) : null;
+      const clean = Object.assign({}, prev || {}, body); delete clean.id;
+      Object.keys(clean).forEach(k => { if (k[0] === "_") delete clean[k]; });
       if (S.mode === "local") {
         id = id || ("l" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
         const list = S.data[key].filter(r => r.id !== id);
@@ -1106,7 +1115,7 @@ select {
       if (id) await this.http("PATCH", "/api/entries/" + encodeURIComponent(id) + "?depth=0", { data: clean });
       else id = String((await this.http("POST", "/api/entries?depth=0", { floor: key, data: clean })).doc.id);
       const list = S.data[key].filter(r => r.id !== id);
-      list.push(Object.assign({}, clean, { id }));
+      list.push(Object.assign({}, clean, { id, _tl: prev ? prev._tl : 0 }));
       S.data[key] = sorted(list);
       return id;
     },
@@ -1176,7 +1185,7 @@ select {
   /* ================= backup ================= */
   function exportJSON() {
     const out = { app: "nxroot-datafort", version: 1, exportedAt: new Date().toISOString(), meta: S.meta, floors: {} };
-    FLOORS.forEach(f => out.floors[f.key] = S.data[f.key].map(r => { const c = Object.assign({}, r); delete c.id; return c; }));
+    FLOORS.forEach(f => out.floors[f.key] = S.data[f.key].map(r => { const c = Object.assign({}, r); delete c.id; Object.keys(c).forEach(k => { if (k[0] === "_") delete c[k]; }); return c; }));
     const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -1324,8 +1333,28 @@ select {
       ${!loading && S.canWrite && canEditNow() ? `<button type="button" class="btn primary" data-act="new">+ ${esc(f.newLabel)}</button>` : ""}`;
   }
 
+  /* full-text search: Postgres ILIKE over Entries.text for the current floor (words AND-ed by Payload's "like") */
+  const FT = { floor: null, q: "", ids: new Set(), timer: 0, seq: 0 };
+  function ftSearch() {
+    clearTimeout(FT.timer);
+    const f = cur(), q = S.q.trim();
+    if (S.mode !== "net" || q.length < 3 || !S.data[f.key].some(r => r._tl)) { FT.floor = null; FT.q = ""; FT.ids = new Set(); return; }
+    FT.timer = setTimeout(async () => {
+      const my = ++FT.seq;
+      try {
+        const j = await API.http("GET", "/api/entries?pagination=false&depth=0&select[floor]=true&where[floor][equals]=" +
+          encodeURIComponent(f.key) + "&where[text][like]=" + encodeURIComponent(q));
+        if (my !== FT.seq) return;
+        FT.floor = f.key; FT.q = q.toLowerCase(); FT.ids = new Set((j.docs || []).map(d => String(d.id)));
+        renderRoster();
+        const r = S.data[f.key].find(x => x.id === S.sel[f.key]);
+        if (r && r._tl && !S.editing) loadText(f, r);
+      } catch (e) { if (my === FT.seq) toast(errMsg(e), true); }
+    }, 300);
+  }
   function matches(f, r, q) {
     if (!q) return true;
+    if (FT.floor === f.key && FT.q === q && FT.ids.has(r.id)) return true;
     const hay = [r[f.primary], ...(f.sub(r) || []), r.name, f.badge(r), code(f, r), ...((f.search && f.search(r)) || [])].filter(has).join(" ").toLowerCase();
     return hay.includes(q);
   }
@@ -1482,8 +1511,37 @@ select {
     const f = cur(), r = S.data[f.key].find(x => x.id === S.sel[f.key]);
     const d = $("#detail");
     if (!r) { d.innerHTML = ""; return; }
-    d.innerHTML = barHTML(f, r, false) + `<article class="d-body">${READ[f.key](f, r)}</article>`;
+    d.innerHTML = barHTML(f, r, false) + `<article class="d-body">${READ[f.key](f, r)}` +
+      (r._tl ? `<section class="d-text"><p class="eyebrow">Full text · loading…</p></section>` : "") + `</article>`;
     d.scrollTop = 0;
+    if (r._tl) loadText(f, r);
+  }
+
+  /* full text of one entry: fetched on demand, cached (last 12), search terms highlighted, first match scrolled into view */
+  const TEXT = new Map();
+  function markText(t, terms) {
+    if (!terms.length) return [esc(t), 0];
+    const re = new RegExp(terms.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi");
+    let out = "", i = 0, n = 0, m;
+    while ((m = re.exec(t))) {
+      if (!m[0]) { re.lastIndex++; continue; }
+      out += esc(t.slice(i, m.index)) + "<mark>" + esc(m[0]) + "</mark>"; i = m.index + m[0].length; n++;
+    }
+    return [out + esc(t.slice(i)), n];
+  }
+  async function loadText(f, r) {
+    let t = TEXT.get(r.id);
+    if (t === undefined) {
+      try { t = (await API.http("GET", "/api/entries/" + encodeURIComponent(r.id) + "?depth=0&select[text]=true")).text || ""; }
+      catch (e) { const b = $("#detail .d-text"); if (b) b.innerHTML = `<p class="eyebrow">Full text</p><p>${esc(errMsg(e))}</p>`; return; }
+      TEXT.set(r.id, t); if (TEXT.size > 12) TEXT.delete(TEXT.keys().next().value);
+    }
+    const box = $("#detail .d-text");
+    if (!box || S.sel[f.key] !== r.id) return;          // the reader moved on while it loaded
+    const terms = S.q.trim().toLowerCase().split(/\s+/).filter(w => w.length > 1);
+    const [html, n] = markText(t, terms);
+    box.innerHTML = `<p class="eyebrow">Full text · ${fmtSize(t.length)}${terms.length ? " · " + n + (n === 1 ? " match" : " matches") : ""}</p><pre class="fulltext">${html}</pre>`;
+    const m = box.querySelector("mark"); if (m) m.scrollIntoView({ block: "center" });
   }
 
   /* ---------- detail: edit ---------- */
@@ -1770,7 +1828,7 @@ select {
 
   $("#floors").addEventListener("click", e => { const b = e.target.closest(".floor"); if (b) goFloor(b.dataset.floor, true); });
 
-  $("#search").addEventListener("input", e => { S.q = e.target.value; renderRoster(); });
+  $("#search").addEventListener("input", e => { S.q = e.target.value; renderRoster(); ftSearch(); });
   $("#new-btn").addEventListener("click", () => { if (S.editing && S.dirty) { toast("Save or cancel your changes first.", true); return; } startEdit(null); });
 
   $("#roster").addEventListener("click", e => {
