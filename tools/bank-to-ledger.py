@@ -77,6 +77,50 @@ def num(s):
 
 DAY_RE = re.compile(r'^## DAY (\d+)\s*[—-]\s*(\w+),\s*(\w+)\s+(\d+),\s*(\d{4})', re.M)
 
+# HAKK-POSITIONS v1: the bank sheet's Hakk sections (personal accounts; stock positions moved that day)
+_HM = re.compile(r'\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d+')
+def _hnum(cell):
+    m = _HM.search(cell.replace('*', ''))
+    return float(m.group().replace(',', '')) if m else None
+def _htable(block, heading_re):
+    m = re.search(heading_re, block, re.M)
+    if not m:
+        return []
+    rows, started = [], False
+    for line in block[m.end():].splitlines():
+        if line.startswith('|'):
+            started = True
+            cells = [c.strip() for c in line.strip().strip('|').split('|')]
+            if not re.fullmatch(r':?-{3,}:?', cells[0]):
+                rows.append(cells)
+        elif started and line.strip():
+            break
+    return rows[1:]
+def hakk_accounts(block):
+    """{'Main': close, 'Investment Capital': close, 'PERSONAL TOTAL': close} from the HAKK — PERSONAL table."""
+    out = {}
+    for c in _htable(block, r'^\*\*HAKK\s*[—-]\s*PERSONAL'):
+        if len(c) >= 4 and _hnum(c[-1]) is not None:
+            out[re.sub(r'\*', '', c[0]).strip()] = _hnum(c[-1])
+    return out
+def hakk_stocks(block):
+    """Rows of the HAKK — STOCK POSITIONS MOVED table: issuer, codes, shares, % of class, mark, value."""
+    out = []
+    for c in _htable(block, r'^\*\*HAKK\s*[—-]\s*STOCK POSITIONS'):
+        if len(c) < 5:
+            continue
+        name = re.sub(r'\*', '', c[0]).strip()
+        short = re.split(r'\s+[—–]\s+|\(', name)[0].strip()
+        cls = 'preferred' if 'preferred' in short.lower() else 'common'
+        issuer = re.sub(r'\s+(common|preferred)$', '', short, flags=re.I).strip()
+        pct = re.search(r'(\d+(?:\.\d+)?)%', c[2])
+        mark = _hnum(c[3]) if re.search(r'\d', c[3]) else None
+        value = _hnum(c[4]) if re.search(r'\d', c[4]) else None
+        out.append({'issuer': issuer, 'cls': cls, 'codes': '+'.join(dict.fromkeys(re.findall(r'\b[A-D]\d{2}\b', name))),
+                    'shares': _hnum(c[1]) or 0, 'pct': float(pct.group(1)) if pct else None,
+                    'mark': mark, 'value': value, 'label': name[:200]})
+    return out
+
 def parse(text):
     """Return {day: {...}} for every '## DAY N' block in the bank sheet."""
     out = {}
@@ -89,6 +133,8 @@ def parse(text):
                'total': None, 'main': None, 'opex': {}, 'sweeps': [], 'debits': []}
         sec = None
         for line in block.splitlines():
+            if re.match(r'\*\*HAKK\b', line.strip()):  # HAKK-POSITIONS v1: Hakk's sections follow; not SI Main
+                sec = 'hakk'; continue
             if not line.startswith('|'):
                 continue
             cells = [c.strip() for c in line.strip().strip('|').split('|')]
@@ -107,6 +153,8 @@ def parse(text):
                 rec['sweeps'].append({'memo': cells[0], 'amount': num(cells[1])})
             elif sec == 'debit':
                 rec['debits'].append({'time': cells[0], 'memo': cells[1], 'amount': num(cells[-1])})
+        rec['hakk'] = hakk_accounts(block)
+        rec['stocks'] = hakk_stocks(block)
         if rec['total'] is None or rec['main'] is None:
             sys.exit(f'[FAIL] Day {day}: no SI TOTAL / SI Main row; the sheet layout changed')
         out[day] = rec
@@ -284,6 +332,18 @@ if pf.is_file():
         personal.append({'code': 'OF-1006-A', 'issuer': 'Orbital Air', 'cls': 'common', 'shares': sh,
                          'pctIssuer': round(sh / 1_960_000_000 * 100, 2), 'cost': float(m9.group(2).replace(',', '')),
                          'value': float(m9.group(3).replace(',', '')), 'note': "Hakk's own name; not CR-03"})
+    # HAKK-POSITIONS v1: positions moved on the bank sheet (latest row per issuer), unless §1 or §9 lists the issuer
+    moved = {}
+    for _d in DAYS:
+        for _s in bank[str(_d)].get('stocks', []):
+            moved[_s['issuer'].lower()] = dict(_s, day=_d)
+    _have = {r['issuer'].lower() for r in equity} | {p['issuer'].lower() for p in personal}
+    for _k, _s in moved.items():
+        if _k in _have:
+            continue
+        personal.append({'code': _s['codes'] or '—', 'issuer': _s['issuer'], 'cls': _s['cls'], 'shares': _s['shares'],
+                         'pctIssuer': _s['pct'], 'mark': _s['mark'], 'cost': None, 'value': _s['value'] or 0,
+                         'note': f"from the bank sheet, Day {_s['day']}" + ('' if _s['value'] else ' · unmarked') + " · not in the portfolio's §1 table"})
     eq_total = round(sum(r['value'] for r in equity), 2)
     if stated is not None and abs(eq_total - stated) > 0.5:
         pfails.append(f'portfolio: equity lines add to {eq_total:,.2f}, the file states {stated:,.2f}')

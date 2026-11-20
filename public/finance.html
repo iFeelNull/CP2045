@@ -265,6 +265,7 @@ a.brand{display:grid;place-items:center;height:56px;margin-bottom:10px;border-ra
 a.brand:hover svg path:first-child{stroke:#ffb21a}
 a.btn{text-decoration:none}
 @media (max-width:760px){.eyebrow .nx{display:none}}
+/* HAKK-POSITIONS v1 */
 </style>
 </head>
 <body>
@@ -682,7 +683,7 @@ function kpisFor(page, L){
   const secT = PF ? PF.equityTotal + sum(PF.debt, r => r.value) + sum(PF.personal, r => r.value) : 0;
   const propT = sum(pfOwned(), p => p.cost), comT = sum(pfCommitted(), p => p.cost);
   return [kpi('Equities at market', PF ? PF.equityTotal : 0, `${pct((PF ? PF.equityTotal : 0) / ALL)} of holdings · <b>${PF ? PF.equity.length : 0}</b> lines`),
-    kpi('Securities, all', secT, `${pct(secT / ALL)} · + notes & Orbital Air`),
+    kpi('Securities, all', secT, `${pct(secT / ALL)} · + notes & Hakk’s own name`),
     kpi('Property at cost', propT, `${pct(propT / ALL)} · <b>${pfOwned().length}</b> priced`),
     kpi('Total holdings', ALL, 'cash + securities + property'),
     kpi('Committed', comT ? -comT : '—', comT ? `${pfCommitted().length} not yet deeded` : 'nothing pending', comT ? 'neg' : '')];
@@ -710,7 +711,7 @@ function allocRows(){
     { name:'Liquid cash (SI)', value:D.cash ? D.cash.total : 0, color:'#ffb21a' },
     { name:'Equities (CR-03)', value:PF ? PF.equityTotal : 0, color:'#408fba' },
     { name:'Notes presenting', value:PF ? sum(PF.debt, r => r.value) : 0, color:'#6e67bd' },
-    { name:'Orbital Air (Hakk)', value:PF ? sum(PF.personal, r => r.value) : 0, color:'#12a7a7' },
+    { name:'Hakk’s own name', value:PF ? sum(PF.personal, r => r.value) : 0, color:'#12a7a7' },
     { name:'Property at cost', value:sum(pfOwned(), p => p.cost), color:'#9d3d8d' }
   ].filter(r => r.value > 0);
 }
@@ -776,8 +777,8 @@ function renderPortfolio(){
     for (const r of PF.debt) h += row(r.code, `<b>${esc(r.issuer)}</b><div class="sub">${esc(r.status)}</div>`, '—', 'presenting', '—', full(r.value), pct(r.value / T), pct(r.value / ALL));
   }
   if (PF && PF.personal.length){
-    h += sec('Hakk’s own name — outside the register');
-    for (const r of PF.personal) h += row(r.code, `<b>${esc(r.issuer)}</b> <span class="dim">${esc(r.cls)}</span><div class="sub">cost ${full(r.cost)} · ${esc(r.note)}</div>`, num(r.shares), '≈' + r.pctIssuer.toFixed(2) + '%', (r.value / r.shares).toFixed(2), full(r.value), '100.0%', pct(r.value / ALL));
+    h += sec('Hakk’s own name', 'Orbital Air (§9) and positions moved on the bank sheet that the portfolio’s §1 table does not list');
+    for (const r of PF.personal) h += row(r.code, `<b>${esc(r.issuer)}</b> <span class="dim">${esc(r.cls)}</span><div class="sub">${r.cost != null ? 'cost ' + full(r.cost) + ' · ' : ''}${esc(r.note)}</div>`, num(r.shares), (r.pctIssuer != null ? '≈' + r.pctIssuer.toFixed(2) + '%' : '—'), (r.mark != null ? r.mark.toFixed(2) : r.value ? (r.value / r.shares).toFixed(2) : '—'), (r.value ? full(r.value) : 'unmarked'), pct(r.value / (sum(PF.personal, x => x.value) || 1)), pct(r.value / ALL));
   }
   if (PF && PF.properties && PF.properties.length){
     const O = pfOwned(), T = sum(O, p => p.cost), order = { Owned:0, Verify:1, Committed:2 };
