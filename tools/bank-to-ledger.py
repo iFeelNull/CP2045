@@ -200,6 +200,15 @@ elif old:
     archive = LEDGER.with_name(f"ledger-xlsx-day{old.get('day', 'old')}.json")
 
 new = parse(src.read_text(encoding='utf-8'))
+kept_hakk = []  # HAKK-POSITIONS v1.1: a re-printed day that lost its HAKK tables keeps the stored ones
+for _d, _r in new.items():
+    _o = bank.get(str(_d)) or {}
+    for _k in ('hakk', 'stocks'):
+        if not _r.get(_k) and _o.get(_k):
+            _r[_k] = _o[_k]
+            if _d not in kept_hakk: kept_hakk.append(_d)
+if kept_hakk:
+    print(f"  kept the stored HAKK sections for Day(s) {kept_hakk} (this sheet re-prints them without)")
 replaced = [d for d in new if str(d) in bank and bank[str(d)] != new[d]]
 added = [d for d in new if str(d) not in bank]
 for d, rec in new.items():
