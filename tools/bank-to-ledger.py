@@ -319,6 +319,7 @@ if pf.is_file():
         if not c[0].strip():                          # the EQUITY AT MARKET total row
             stated = money(c[-1]); continue
         short = re.split(r'\s+[—–]\s+|:', name)[0].strip()
+        short = re.sub(r'\s*\([^)]*\)', '', short).strip()  # HAKK-POSITIONS v1.2
         cls = 'preferred' if 'preferred' in short.lower() else 'Class B (control)' if 'Class B' in name else 'common'
         issuer = re.sub(r'\s+(common|preferred|—.*|Class B.*)$', '', short).strip()
         pct = re.search(r'(\d+(?:\.\d+)?)%', c[4])
@@ -353,6 +354,24 @@ if pf.is_file():
         personal.append({'code': _s['codes'] or '—', 'issuer': _s['issuer'], 'cls': _s['cls'], 'shares': _s['shares'],
                          'pctIssuer': _s['pct'], 'mark': _s['mark'], 'cost': None, 'value': _s['value'] or 0,
                          'note': f"from the bank sheet, Day {_s['day']}" + ('' if _s['value'] else ' · unmarked') + " · not in the portfolio's §1 table"})
+    # HAKK-POSITIONS v1.2: Orbital Air at its newest §9 holding (the open-market sale's daily fills)
+    _s9 = pt[pt.find('## 9 '):] if '## 9 ' in pt else ''
+    _best = None
+    for _m in re.finditer(r'\*\*Day (\d+) \(booked[^)]*\):\*\*(.*)', _s9):
+        _sh = re.search(r'Holding: ([\d,]+) sh', _m.group(2))
+        if _sh and (_best is None or int(_m.group(1)) > _best[0]):
+            _best = (int(_m.group(1)), _m.group(2), _sh)
+    for _p in personal:
+        if _p.get('code') == 'OF-1006-A' and _best:
+            _d, _txt, _sh = _best
+            _p['shares'] = float(_sh.group(1).replace(',', ''))
+            _px = re.search(r' at (\d+\.\d+)', _txt)
+            _rc = re.search(r'remaining cost ([\d,]+\.\d+)', _txt)
+            if _px:
+                _p['mark'] = float(_px.group(1)); _p['value'] = round(_p['shares'] * _p['mark'], 2)
+            _p['cost'] = float(_rc.group(1).replace(',', '')) if _rc else None
+            _p['pctIssuer'] = round(_p['shares'] / 1_960_000_000 * 100, 2)
+            _p['note'] = f"Hakk's own name; not CR-03 · the open-market sale (D-055), holding at the Day-{_d} close"
     eq_total = round(sum(r['value'] for r in equity), 2)
     if stated is not None and abs(eq_total - stated) > 0.5:
         pfails.append(f'portfolio: equity lines add to {eq_total:,.2f}, the file states {stated:,.2f}')
