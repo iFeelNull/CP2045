@@ -365,7 +365,8 @@ if pf.is_file():
         if _p.get('code') == 'OF-1006-A' and _best:
             _d, _txt, _sh = _best
             _p['shares'] = float(_sh.group(1).replace(',', ''))
-            _px = re.search(r' at (\d+\.\d+)', _txt)
+            _pxs = re.findall(r'\bsh at (\d+\.\d+)', _txt.split('Holding:')[0])  # HAKK-POSITIONS v1.3: the fill, not a band
+            _px = re.match(r'(.*)', _pxs[-1]) if _pxs else None
             _rc = re.search(r'remaining cost ([\d,]+\.\d+)', _txt)
             if _px:
                 _p['mark'] = float(_px.group(1)); _p['value'] = round(_p['shares'] * _p['mark'], 2)
