@@ -266,6 +266,9 @@ a.brand:hover svg path:first-child{stroke:#ffb21a}
 a.btn{text-decoration:none}
 @media (max-width:760px){.eyebrow .nx{display:none}}
 /* HAKK-POSITIONS v1 */
+/* ISSUER-ROWS v1 */
+tr.issuer-total td{font-weight:600;border-top:1px solid rgba(255,255,255,.18)}
+tr.issuer-line td:nth-child(2){padding-left:1.4em;opacity:.85}
 </style>
 </head>
 <body>
@@ -767,7 +770,17 @@ function renderPortfolio(){
   if (PF && PF.equity.length){
     const E = PF.equity.slice().sort((a,b) => b.value - a.value), T = PF.equityTotal;
     h += sec('Equities — the CR-03 register, Hakk’s name', 'a price, not cash · ' + E.length + ' lines');
-    for (const r of E) h += row(r.code, `<b>${esc(r.issuer)}</b> <span class="dim">${esc(r.cls)}</span>${r.note ? `<div class="sub">${esc(r.note.slice(0, 140))}</div>` : ''}`, num(r.shares), r.pctIssuer == null ? 'pref.' : '≈' + r.pctIssuer.toFixed((String(r.pctIssuer).split('.')[1] || '').length > 1 ? 2 : 1) + '%', r.mark == null ? '—' : r.mark.toFixed(2), full(r.value), pct(r.value / T), pct(r.value / ALL));
+    const GRP = new Map(); for (const r of E){ if (!GRP.has(r.issuer)) GRP.set(r.issuer, []); GRP.get(r.issuer).push(r); }  /* ISSUER-ROWS v1 */
+    const piTxt = r => r.pctIssuer == null ? 'pref.' : '≈' + r.pctIssuer.toFixed((String(r.pctIssuer).split('.')[1] || '').length > 1 ? 2 : 1) + '%';
+    for (const [k, L] of [...GRP.entries()].sort((a, b) => sum(b[1], x => x.value) - sum(a[1], x => x.value))){
+      const multi = L.length > 1 && L.every(x => x.cls === L[0].cls);
+      if (multi){
+        const v = sum(L, x => x.value), sh = sum(L, x => x.shares), p = sum(L, x => x.pctIssuer || 0);
+        const approx = L.some(x => /~|≈/.test(x.pctNote || '')), marks = [...new Set(L.map(x => x.mark))];
+        h += row(L.map(x => x.code).join(' + '), `<b>${esc(k)}</b> <span class="dim">${esc(L[0].cls)} · ${L.length} lines combined</span>`, num(sh), (approx ? '≈' + p.toFixed(1) : p.toFixed(2)) + '%', marks.length === 1 && marks[0] != null ? marks[0].toFixed(2) : '—', full(v), pct(v / T), pct(v / ALL), 'issuer-total');
+      }
+      for (const r of L) h += row(r.code, `${multi ? '' : '<b>'}${esc(r.issuer)}${multi ? '' : '</b>'} <span class="dim">${esc(r.cls)}</span>${r.note ? `<div class="sub">${esc(r.note.slice(0, 140))}</div>` : ''}`, num(r.shares), piTxt(r), r.mark == null ? '—' : r.mark.toFixed(2), full(r.value), pct(r.value / T), pct(r.value / ALL), multi ? 'issuer-line' : '');
+    }
     h += row('', `<b>Equities at market</b>${PF.equityStated != null ? ` <span class="dim">· matches the register's ${full(PF.equityStated)}</span>` : ''}`, '', '', '', full(T), '100.0%', pct(T / ALL), 'subtotal');
     if (PF.rocklin){ const r = PF.rocklin; h += row(r.code, `<b>${esc(r.issuer)}</b> <span class="dim">${esc(r.cls)} · indicative, not in any total</span><div class="sub">${esc(r.pctNote)}</div>`, num(r.shares), r.pctIssuer == null ? '—' : r.pctIssuer.toFixed(1) + '% of B', r.mark == null ? '—' : r.mark.toFixed(2), full(r.value), '—', '—', 'muted'); }
   }
